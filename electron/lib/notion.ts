@@ -175,7 +175,9 @@ export class NotionClient {
     const all = await Promise.all(
       pairings.map(async (pairing) => {
         try {
-          const filter = buildTaskFilter(assigneeId, typeFilter);
+          // Type filter is applied client-side because the property name
+          // differs across teamspaces ("Type" vs "Task Type").
+          const filter = buildTaskFilter(assigneeId);
           const params: QueryDatabaseParameters = {
             database_id: pairing.tasksDbId,
             page_size: 100,
@@ -214,7 +216,10 @@ export class NotionClient {
       }),
     );
 
-    return all.flat();
+    const flat = all.flat();
+    if (typeFilter.length === 0) return flat;
+    const allowed = new Set<string>(typeFilter);
+    return flat.filter((t) => t.type !== null && allowed.has(t.type));
   }
 
   async createWorkSession(input: WriteSessionInput): Promise<void> {
@@ -252,7 +257,6 @@ export class NotionClient {
 
 function buildTaskFilter(
   assigneeId: string | null,
-  typeFilter: TaskType[],
 ): QueryDatabaseParameters["filter"] | undefined {
   const clauses: NonNullable<QueryDatabaseParameters["filter"]>[] = [];
 
@@ -270,20 +274,16 @@ function buildTaskFilter(
     });
   }
 
-  if (typeFilter.length > 0) {
-    const typeOr = typeFilter.map((t) => ({
-      property: "Type",
-      select: { equals: t },
-    }));
-    clauses.push({ or: typeOr } as unknown as NonNullable<
-      QueryDatabaseParameters["filter"]
-    >);
-  }
-
   if (clauses.length === 0) return undefined;
   if (clauses.length === 1) return clauses[0];
   return { and: clauses } as QueryDatabaseParameters["filter"];
 }
+
+// Names we'll look for when scanning a task page — different teamspaces rename
+// the default "Name" column (e.g. Client DB uses "Task") and use different
+// Type property names ("Type" vs "Task Type").
+const TYPE_PROPERTY_NAMES = ["Type", "Task Type"];
+const DUE_PROPERTY_NAMES = ["Due", "Due Date", "Deadline"];
 
 function mapPageToTaskItem(
   page: PageObjectResponse,
@@ -291,21 +291,27 @@ function mapPageToTaskItem(
 ): TaskItem {
   const props = page.properties;
 
-  // Title
+  // Title — find by TYPE, not by name (the column is renamed in some DBs).
   let title = "Untitled";
-  const nameProp = props["Name"];
-  if (nameProp && nameProp.type === "title") {
-    title = nameProp.title.map((t) => t.plain_text).join("").trim() || "Untitled";
+  for (const prop of Object.values(props)) {
+    if (prop.type === "title") {
+      const text = prop.title.map((t) => t.plain_text).join("").trim();
+      if (text) title = text;
+      break;
+    }
   }
 
   // Due
   let dueDate: string | null = null;
   let dueHasTime = false;
-  const dueProp = props["Due"];
-  if (dueProp && dueProp.type === "date" && dueProp.date) {
-    const raw = dueProp.date.start;
-    dueHasTime = raw.length > 10; // ISO datetime if it has a T, else just YYYY-MM-DD
-    dueDate = dueHasTime ? raw : raw.slice(0, 10);
+  for (const name of DUE_PROPERTY_NAMES) {
+    const p = props[name];
+    if (p && p.type === "date" && p.date) {
+      const raw = p.date.start;
+      dueHasTime = raw.length > 10;
+      dueDate = dueHasTime ? raw : raw.slice(0, 10);
+      break;
+    }
   }
 
   // Status
@@ -324,18 +330,16 @@ function mapPageToTaskItem(
       priority = n;
   }
 
-  // Type
+  // Type — check both "Type" and "Task Type" since the Client DB renames it.
+  // Return whatever value is set, regardless of the fixed TaskType enum, so
+  // categories like "Design" / "Amazon" surface in the UI too.
   let type: TaskType | null = null;
-  const typeProp = props["Type"];
-  if (typeProp && typeProp.type === "select" && typeProp.select) {
-    const n = typeProp.select.name;
-    if (
-      n === "To do List" ||
-      n === "Scorecard" ||
-      n === "Weekly Report" ||
-      n === "Time Tracking Tasks"
-    )
-      type = n;
+  for (const name of TYPE_PROPERTY_NAMES) {
+    const p = props[name];
+    if (p && p.type === "select" && p.select) {
+      type = p.select.name as TaskType;
+      break;
+    }
   }
 
   return {
