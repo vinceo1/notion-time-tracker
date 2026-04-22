@@ -7,7 +7,10 @@ import type {
   WriteSessionInput,
   WriteSessionResult,
 } from "./lib/types.js";
-import type { UpdateCheckResult } from "./lib/updater.js";
+import type {
+  DownloadProgress,
+  UpdateCheckResult,
+} from "./lib/updater.js";
 
 type QueueListener = (size: number) => void;
 
@@ -50,6 +53,11 @@ const api = {
       url: string,
     ): Promise<{ ok: true; filepath: string } | { ok: false; error: string }> =>
       ipcRenderer.invoke("updater:download", url),
+    onProgress: (cb: (p: DownloadProgress) => void): (() => void) => {
+      const listener = (_: unknown, p: DownloadProgress) => cb(p);
+      ipcRenderer.on("updater:progress", listener);
+      return () => ipcRenderer.removeListener("updater:progress", listener);
+    },
   },
 };
 

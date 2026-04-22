@@ -301,9 +301,19 @@ function UpdatesSection(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadedPath, setDownloadedPath] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{
+    bytesDownloaded: number;
+    totalBytes: number | null;
+  } | null>(null);
 
   useEffect(() => {
     api.app.version().then(setVersion).catch(() => setVersion("—"));
+  }, []);
+
+  // Subscribe to download progress events. The cleanup fn is returned by
+  // the preload bridge so we don't leak listeners when Settings closes.
+  useEffect(() => {
+    return api.updater.onProgress((p) => setProgress(p));
   }, []);
 
   async function handleCheck() {
@@ -325,6 +335,7 @@ function UpdatesSection(): JSX.Element {
     if (!result?.downloadUrl) return;
     setDownloading(true);
     setError(null);
+    setProgress({ bytesDownloaded: 0, totalBytes: null });
     try {
       const r = await api.updater.download(result.downloadUrl);
       if (r.ok) {
@@ -334,6 +345,7 @@ function UpdatesSection(): JSX.Element {
       }
     } finally {
       setDownloading(false);
+      setProgress(null);
     }
   }
 
@@ -385,6 +397,8 @@ function UpdatesSection(): JSX.Element {
                   Saved to <span className="font-mono">{downloadedPath}</span>.
                   The installer opened — drag the app into Applications to finish the update.
                 </div>
+              ) : downloading ? (
+                <DownloadProgressBar progress={progress} />
               ) : (
                 <button
                   type="button"
@@ -392,7 +406,7 @@ function UpdatesSection(): JSX.Element {
                   onClick={handleDownload}
                   disabled={downloading}
                 >
-                  {downloading ? "Downloading…" : "Download & install"}
+                  Download &amp; install
                 </button>
               )
             ) : (
@@ -414,6 +428,41 @@ function UpdatesSection(): JSX.Element {
       </div>
     </Section>
   );
+}
+
+function DownloadProgressBar({
+  progress,
+}: {
+  progress: { bytesDownloaded: number; totalBytes: number | null } | null;
+}): JSX.Element {
+  const bytes = progress?.bytesDownloaded ?? 0;
+  const total = progress?.totalBytes ?? null;
+  const pct = total && total > 0 ? Math.min(100, (bytes / total) * 100) : null;
+  const label =
+    total !== null
+      ? `${formatMB(bytes)} / ${formatMB(total)}`
+      : `${formatMB(bytes)} downloaded…`;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full bg-white transition-[width] duration-150"
+          style={{ width: pct !== null ? `${pct}%` : "30%" }}
+        />
+      </div>
+      <div className="text-[11px] text-white/60">
+        Downloading… {label}
+        {pct !== null ? ` (${pct.toFixed(0)}%)` : ""}
+      </div>
+    </div>
+  );
+}
+
+function formatMB(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 100) return `${mb.toFixed(0)} MB`;
+  if (mb >= 10) return `${mb.toFixed(1)} MB`;
+  return `${mb.toFixed(2)} MB`;
 }
 
 function Section({

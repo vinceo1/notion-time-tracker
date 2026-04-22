@@ -27,6 +27,24 @@ export interface DbPairing {
   taskRelationName: string;
   /** All Status option names in this teamspace's Tasks DB, in Notion's order. */
   statusOptions: string[];
+  /**
+   * Name of the person-type property used as "assignee" in this Tasks DB.
+   * Different teamspaces use different names ("Assignee", "Participants",
+   * "Owner"…). Null when the DB has no person-type property.
+   */
+  assigneePropertyName: string | null;
+  /**
+   * Name of the status-type property. Null when the DB has no status
+   * property (rare, but possible).
+   */
+  statusPropertyName: string | null;
+  /**
+   * Names of statuses that belong to the "complete" group on the DB
+   * (e.g. ["Complete", "Blocked"] for Company/Client, ["Done"] for L10).
+   * The task filter excludes these values so finished tasks don't appear
+   * in the tracker.
+   */
+  completedStatusNames: string[];
 }
 
 export interface DiscoverResult {

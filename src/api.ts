@@ -20,4 +20,7 @@ export type {
   WriteSessionInput,
   WriteSessionResult,
 } from "../electron/lib/types";
-export type { UpdateCheckResult } from "../electron/lib/updater";
+export type {
+  DownloadProgress,
+  UpdateCheckResult,
+} from "../electron/lib/updater";

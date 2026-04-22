@@ -145,17 +145,23 @@ export class NotionClient {
         const tasksDbId = taskRelation.relation.database_id;
         const label = labelForWorkSessionsDb(titleText);
 
-        // Retrieve the Tasks DB so we can extract its Status options
-        // (options differ across teamspaces, e.g. "In progress" vs
-        // "In Progress").
-        const statusOptions = await this.fetchStatusOptions(tasksDbId, warnings);
+        // Retrieve the Tasks DB so we can learn *its* shape, rather than
+        // assuming every DB uses the same property names. Different
+        // teamspaces use different names for assignee ("Assignee",
+        // "Participants"…) and different status option sets
+        // (Complete/Blocked vs. Done/Upcoming), so we detect them once
+        // at discovery and carry the results on the pairing.
+        const meta = await this.fetchTasksDbMeta(tasksDbId, warnings);
 
         pairings.push({
           label,
           tasksDbId,
           workSessionDbId: db.id,
           taskRelationName: "Task",
-          statusOptions,
+          statusOptions: meta.statusOptions,
+          assigneePropertyName: meta.assigneePropertyName,
+          statusPropertyName: meta.statusPropertyName,
+          completedStatusNames: meta.completedStatusNames,
         });
       } catch (err) {
         warnings.push(
@@ -188,12 +194,15 @@ export class NotionClient {
         ): Promise<{ tasks: TaskItem[]; error: TaskQueryError | null }> => {
           try {
             // Type filter is applied client-side because the property name
-            // differs across teamspaces ("Type" vs "Task Type").
-            const filter = buildTaskFilter(assigneeId);
+            // differs across teamspaces ("Type" vs "Task Type"). Assignee
+            // + Status filter clauses are built per pairing using the
+            // actual property names discovered on that DB.
+            const filter = buildTaskFilter(pairing, assigneeId);
             const params: QueryDatabaseParameters = {
               database_id: pairing.tasksDbId,
               page_size: 100,
-              sorts: [{ property: "Due", direction: "ascending" }],
+              // Not every Tasks DB has a "Due" property — omit the sort
+              // when there is none, rather than 400-ing the whole query.
             };
             if (filter) params.filter = filter;
 
@@ -258,23 +267,110 @@ export class NotionClient {
     return { tasks: filtered, errors };
   }
 
-  async fetchStatusOptions(
+  /**
+   * Inspect a Tasks DB and pull out the bits of schema the app needs to
+   * filter, render and mutate safely. Designed to be called during Discover
+   * and again during silent migration for pairings saved before these
+   * fields existed.
+   */
+  async fetchTasksDbMeta(
     tasksDbId: string,
     warnings: string[],
-  ): Promise<string[]> {
+  ): Promise<{
+    statusOptions: string[];
+    completedStatusNames: string[];
+    statusPropertyName: string | null;
+    assigneePropertyName: string | null;
+  }> {
     try {
       const db = (await this.client.databases.retrieve({
         database_id: tasksDbId,
       })) as DatabaseObjectResponse;
-      const statusProp = db.properties["Status"];
-      if (!statusProp || statusProp.type !== "status") return [];
-      return statusProp.status.options.map((o) => o.name);
+      const props = db.properties ?? {};
+
+      // Status: find by type. Grab options + whatever Notion considers
+      // the "complete" group so we can exclude finished tasks regardless
+      // of what they're named in this DB.
+      let statusOptions: string[] = [];
+      let completedStatusNames: string[] = [];
+      let statusPropertyName: string | null = null;
+      for (const [name, prop] of Object.entries(props)) {
+        if (prop.type === "status") {
+          statusPropertyName = name;
+          statusOptions = prop.status.options.map((o) => o.name);
+          const groups = (
+            prop.status as unknown as {
+              groups?: Array<{ name?: string; option_ids?: string[] }>;
+            }
+          ).groups;
+          if (Array.isArray(groups)) {
+            const completeGroup = groups.find(
+              (g) => (g.name ?? "").toLowerCase() === "complete",
+            );
+            if (completeGroup && Array.isArray(completeGroup.option_ids)) {
+              const idSet = new Set(completeGroup.option_ids);
+              completedStatusNames = prop.status.options
+                .filter((o) => idSet.has(o.id))
+                .map((o) => o.name);
+            }
+          }
+          break;
+        }
+      }
+
+      // Assignee: prefer a person-type property with a common name,
+      // otherwise fall back to the first person-type property in the DB.
+      const PREFERRED = [
+        "assignee",
+        "assigned to",
+        "owner",
+        "responsible",
+        "participants",
+      ];
+      let assigneePropertyName: string | null = null;
+      const personProps: string[] = [];
+      for (const [name, prop] of Object.entries(props)) {
+        if (prop.type === "people") personProps.push(name);
+      }
+      for (const candidate of PREFERRED) {
+        const match = personProps.find((n) => n.toLowerCase() === candidate);
+        if (match) {
+          assigneePropertyName = match;
+          break;
+        }
+      }
+      if (!assigneePropertyName && personProps.length > 0) {
+        assigneePropertyName = personProps[0];
+      }
+
+      return {
+        statusOptions,
+        completedStatusNames,
+        statusPropertyName,
+        assigneePropertyName,
+      };
     } catch (err) {
       warnings.push(
-        `Could not read Status options for tasks DB ${tasksDbId}: ${describeError(err)}`,
+        `Could not read schema for tasks DB ${tasksDbId}: ${describeError(err)}`,
       );
-      return [];
+      return {
+        statusOptions: [],
+        completedStatusNames: [],
+        statusPropertyName: null,
+        assigneePropertyName: null,
+      };
     }
+  }
+
+  /**
+   * @deprecated Kept for the silent-migration path in main.ts; prefer
+   * `fetchTasksDbMeta` for new callers.
+   */
+  async fetchStatusOptions(
+    tasksDbId: string,
+    warnings: string[],
+  ): Promise<string[]> {
+    return (await this.fetchTasksDbMeta(tasksDbId, warnings)).statusOptions;
   }
 
   async updateTaskStatus(taskId: string, statusName: string): Promise<void> {
@@ -320,21 +416,32 @@ export class NotionClient {
 }
 
 function buildTaskFilter(
+  pairing: DbPairing,
   assigneeId: string | null,
 ): QueryDatabaseParameters["filter"] | undefined {
   const clauses: NonNullable<QueryDatabaseParameters["filter"]>[] = [];
 
-  if (assigneeId) {
+  // Only add the assignee clause when the DB actually has a person property
+  // for it — otherwise the query 400s with "Could not find property".
+  if (assigneeId && pairing.assigneePropertyName) {
     clauses.push({
-      property: "Assignee",
+      property: pairing.assigneePropertyName,
       people: { contains: assigneeId },
     });
   }
 
-  for (const excluded of EXCLUDED_STATUSES) {
+  // Exclude whatever this DB considers its "complete" statuses (e.g.
+  // Complete + Blocked for Company; Done for L10). Falls back to a sane
+  // hardcoded list only if the pairing was saved without the metadata.
+  const excluded =
+    pairing.completedStatusNames.length > 0
+      ? pairing.completedStatusNames
+      : EXCLUDED_STATUSES;
+  const statusProp = pairing.statusPropertyName ?? "Status";
+  for (const value of excluded) {
     clauses.push({
-      property: "Status",
-      status: { does_not_equal: excluded },
+      property: statusProp,
+      status: { does_not_equal: value },
     });
   }
 
@@ -378,11 +485,21 @@ function mapPageToTaskItem(
     }
   }
 
-  // Status
+  // Status — use the property name discovered for this pairing, falling
+  // back to generic "find any status-type property" for backwards compat
+  // with pairings saved before we started detecting the name.
   let status: string | null = null;
-  const statusProp = props["Status"];
+  const statusKey = pairing.statusPropertyName ?? "Status";
+  const statusProp = props[statusKey];
   if (statusProp && statusProp.type === "status" && statusProp.status) {
     status = statusProp.status.name;
+  } else if (!pairing.statusPropertyName) {
+    for (const prop of Object.values(props)) {
+      if (prop.type === "status" && prop.status) {
+        status = prop.status.name;
+        break;
+      }
+    }
   }
 
   // Priority

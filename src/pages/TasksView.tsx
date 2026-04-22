@@ -190,7 +190,9 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
             label={
               config.pairings.length === 0
                 ? "No databases connected yet. Open Settings to discover your Work Sessions."
-                : "No open tasks assigned to you. Time to breathe."
+                : taskErrors.length > 0
+                  ? "Couldn't load any tasks — see the warnings above."
+                  : "No open tasks assigned to you. Time to breathe."
             }
           />
         ) : (

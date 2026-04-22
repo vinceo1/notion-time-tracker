@@ -130,7 +130,23 @@ async function tryFlushQueue(): Promise<void> {
   if (!configStore.get().notionToken) return;
   const client = ensureNotion();
   await queue.flush(async (item) => {
-    await client.createWorkSession(item);
+    // Re-validate at flush time: the user may have removed the pairing
+    // between enqueue and flush. Writing anyway would put the session in
+    // a DB the user no longer thinks is connected.
+    const pairing = configStore
+      .get()
+      .pairings.find((p) => p.workSessionDbId === item.workSessionDbId);
+    if (!pairing) {
+      throw new Error(
+        `Queued session's Work Sessions DB is no longer in the configured pairings; dropping.`,
+      );
+    }
+    const sanitized: WriteSessionInput = {
+      ...item,
+      workSessionDbId: pairing.workSessionDbId,
+      taskRelationName: pairing.taskRelationName,
+    };
+    await client.createWorkSession(sanitized);
   });
   win?.webContents.send("queue:updated", queue.size());
 }
@@ -159,20 +175,45 @@ function registerIpc(): void {
     const cfg = configStore.get();
     const client = ensureNotion();
 
-    // Silent migration: some users have config.json entries saved before
-    // `statusOptions` existed on DbPairing. Fetch + persist the missing
-    // options so the in-app status dropdown lights up on next render.
-    const missing = cfg.pairings.filter(
-      (p) => !p.statusOptions || p.statusOptions.length === 0,
+    // Silent migration: pairings saved before we started detecting the
+    // full per-DB schema (assignee property name, completed-status group,
+    // etc.) can be missing those fields. Backfill them on the fly so the
+    // user doesn't have to click Discover again after upgrading.
+    const needsMigration = cfg.pairings.some(
+      (p) =>
+        !p.statusOptions ||
+        p.statusOptions.length === 0 ||
+        p.assigneePropertyName === undefined ||
+        p.statusPropertyName === undefined ||
+        !Array.isArray(p.completedStatusNames),
     );
-    if (missing.length > 0) {
+    if (needsMigration) {
       const warnings: string[] = [];
       const refreshed = await Promise.all(
         cfg.pairings.map(async (p) => {
-          if (p.statusOptions && p.statusOptions.length > 0) return p;
+          const hasAll =
+            p.statusOptions &&
+            p.statusOptions.length > 0 &&
+            p.assigneePropertyName !== undefined &&
+            p.statusPropertyName !== undefined &&
+            Array.isArray(p.completedStatusNames);
+          if (hasAll) return p;
           try {
-            const opts = await client.fetchStatusOptions(p.tasksDbId, warnings);
-            return { ...p, statusOptions: opts };
+            const meta = await client.fetchTasksDbMeta(p.tasksDbId, warnings);
+            return {
+              ...p,
+              statusOptions:
+                p.statusOptions && p.statusOptions.length > 0
+                  ? p.statusOptions
+                  : meta.statusOptions,
+              assigneePropertyName:
+                p.assigneePropertyName ?? meta.assigneePropertyName,
+              statusPropertyName:
+                p.statusPropertyName ?? meta.statusPropertyName,
+              completedStatusNames: Array.isArray(p.completedStatusNames)
+                ? p.completedStatusNames
+                : meta.completedStatusNames,
+            };
           } catch {
             return p;
           }
@@ -188,8 +229,9 @@ function registerIpc(): void {
       typeFilter: current.typeFilter,
     });
 
-    // Cache the tasks we just returned so subsequent writes can be bounded
-    // by "you may only touch things we actually showed you".
+    // Cache the tasks we just returned. Status updates (which mutate
+    // existing pages) validate against this. Session writes only need
+    // to validate the *pairing*, so they don't depend on this cache.
     lastTasks = new Map(result.tasks.map((t) => [t.id, t]));
 
     return result;
@@ -198,11 +240,17 @@ function registerIpc(): void {
   ipcMain.handle(
     "notion:writeSession",
     async (_evt, input: WriteSessionInput): Promise<{ ok: true } | { ok: false; queued: true }> => {
-      // Validate the target matches a trusted pairing BEFORE any attempt to
-      // contact Notion. A compromised / misbehaving renderer could otherwise
-      // point the write at an arbitrary database the integration token can
-      // reach. We also force the relation-property name to the one stored
-      // on the pairing, ignoring whatever the renderer sent.
+      // Validate the target matches a trusted pairing BEFORE any attempt
+      // to contact Notion. A compromised / misbehaving renderer could
+      // otherwise point the write at an arbitrary database the integration
+      // token can reach. We also force the relation-property name to the
+      // one stored on the pairing, ignoring whatever the renderer sent.
+      //
+      // We intentionally do NOT require the taskId to appear in the last
+      // tasks fetch: users refresh while tracking, and losing an active
+      // session to a cache mismatch is worse UX than the residual risk.
+      // Notion's own relation validation still rejects tasks that don't
+      // belong to the pairing's Tasks DB.
       let pairing: DbPairing;
       try {
         pairing = pairingForWorkSessionDb(input.workSessionDbId);
@@ -210,19 +258,13 @@ function registerIpc(): void {
         console.warn("Rejected writeSession (unknown pairing):", err);
         throw err; // this is a bug / attack, not a transient failure — don't queue
       }
-      // Only accept a task id we actually surfaced in the most recent
-      // tasks fetch — this keeps write scope bound to what the user could
-      // plausibly have clicked.
-      const known = lastTasks.get(input.taskId);
-      if (!known || known.workSessionDbId !== pairing.workSessionDbId) {
-        const msg = `Refusing to write session for unknown or cross-pairing task ${input.taskId}`;
-        console.warn(msg);
-        throw new Error(msg);
-      }
 
+      // Use the cached task title if we still have it (accurate + tamper-
+      // resistant); otherwise fall back to whatever the renderer sent.
+      const known = lastTasks.get(input.taskId);
       const trustedInput: WriteSessionInput = {
         ...input,
-        taskTitle: known.title, // re-use the title we saw server-side
+        taskTitle: known?.title ?? input.taskTitle,
         workSessionDbId: pairing.workSessionDbId,
         taskRelationName: pairing.taskRelationName,
       };
@@ -327,9 +369,22 @@ function registerIpc(): void {
         };
       }
       try {
-        const filepath = await downloadAssetToDownloads(url);
-        // Reveal the DMG / EXE in Finder / Explorer and open it so the user
-        // can drag-to-Applications (Mac) or run the installer (Windows).
+        // Throttle progress events to avoid swamping the IPC bridge on
+        // fast connections (chunks arrive every few ms).
+        let lastEmit = 0;
+        const filepath = await downloadAssetToDownloads(url, {
+          onProgress: ({ bytesDownloaded, totalBytes }) => {
+            const now = Date.now();
+            if (now - lastEmit < 150 && totalBytes && bytesDownloaded < totalBytes) {
+              return;
+            }
+            lastEmit = now;
+            win?.webContents.send("updater:progress", {
+              bytesDownloaded,
+              totalBytes,
+            });
+          },
+        });
         shell.openPath(filepath).catch(() => {});
         return { ok: true, filepath };
       } catch (err) {

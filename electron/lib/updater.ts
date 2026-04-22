@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { createWriteStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 export interface UpdateCheckResult {
   currentVersion: string;
@@ -17,20 +19,53 @@ export interface UpdateCheckResult {
   reason: "ok" | "no_releases";
 }
 
+export interface DownloadProgress {
+  bytesDownloaded: number;
+  totalBytes: number | null;
+}
+
 const GITHUB_OWNER = "vinceo1";
 const GITHUB_REPO = "notion-time-tracker";
 const LATEST_ENDPOINT = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 
-// Hosts we're willing to fetch update binaries from. Everything else is
-// rejected outright. GitHub redirects release-asset downloads from
-// github.com → objects.githubusercontent.com (Azure-hosted S3), so both
-// must be in the allowlist.
+// Ten minutes is generous enough for a flaky hotel Wi-Fi on a 150 MB DMG,
+// short enough that a stuck connection doesn't leave "Downloading…" on
+// the screen forever.
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
 const ALLOWED_DOWNLOAD_HOSTS = new Set([
   "github.com",
   "objects.githubusercontent.com",
   "codeload.github.com",
 ]);
 const RELEASE_PATH_PREFIX = `/${GITHUB_OWNER}/${GITHUB_REPO}/releases/`;
+
+// Windows reserves these base names regardless of extension. Adding a safety
+// prefix is cheaper than trying to rename a pre-existing CON.dmg on Windows.
+const WINDOWS_RESERVED = new Set([
+  "con",
+  "prn",
+  "aux",
+  "nul",
+  "com1",
+  "com2",
+  "com3",
+  "com4",
+  "com5",
+  "com6",
+  "com7",
+  "com8",
+  "com9",
+  "lpt1",
+  "lpt2",
+  "lpt3",
+  "lpt4",
+  "lpt5",
+  "lpt6",
+  "lpt7",
+  "lpt8",
+  "lpt9",
+]);
 
 export async function checkForUpdate(
   currentVersion: string,
@@ -72,9 +107,6 @@ export async function checkForUpdate(
     if (asset) downloadUrl = asset.browser_download_url;
   }
 
-  // Defense in depth: if, for any reason, the API ever returned a URL we
-  // wouldn't accept at download time, treat the asset as missing instead
-  // of leaking a rogue URL to the renderer.
   if (downloadUrl && !isSafeAssetUrl(downloadUrl)) {
     downloadUrl = null;
   }
@@ -92,8 +124,9 @@ export async function checkForUpdate(
 }
 
 /**
- * True if the URL points to this repo's release assets on an allowed GitHub
- * host. Everything else (other repos, arbitrary hosts, non-HTTPS) is rejected.
+ * True if the URL points to this repo's release assets on an allowed
+ * GitHub host. Everything else (other repos, arbitrary hosts, non-HTTPS)
+ * is rejected.
  */
 export function isSafeAssetUrl(url: string): boolean {
   let parsed: URL;
@@ -104,8 +137,6 @@ export function isSafeAssetUrl(url: string): boolean {
   }
   if (parsed.protocol !== "https:") return false;
   if (!ALLOWED_DOWNLOAD_HOSTS.has(parsed.hostname)) return false;
-  // github.com URLs MUST live under this repo's releases path; the S3-style
-  // redirect host doesn't expose a repo path, so we can only gate by host.
   if (
     parsed.hostname === "github.com" &&
     !parsed.pathname.startsWith(RELEASE_PATH_PREFIX)
@@ -116,30 +147,49 @@ export function isSafeAssetUrl(url: string): boolean {
 }
 
 /**
- * Download the asset to ~/Downloads and return the absolute path of the saved
- * file. The caller decides whether to open it (shell.openPath) or just reveal.
- *
- * The URL is validated against `isSafeAssetUrl` first — a hard guarantee that
- * we'll never fetch-and-execute a binary from an unexpected origin even if a
- * compromised renderer forwards one in.
- *
- * The write is staged to a temp file in the Downloads dir and moved into
- * place atomically; if the target filename already exists (e.g. a prior
- * download of the same version) a versioned name like
- * "Notion Time Tracker-0.3.0-arm64 (1).dmg" is picked instead.
+ * Download the asset to ~/Downloads and return the absolute path of the
+ * saved file. Streams to disk (constant memory), times out on stalls,
+ * reports progress, rejects untrusted URLs, and never overwrites an
+ * existing file — a versioned name like "Foo (1).dmg" is picked instead.
  */
-export async function downloadAssetToDownloads(url: string): Promise<string> {
+export async function downloadAssetToDownloads(
+  url: string,
+  opts?: {
+    onProgress?: (p: DownloadProgress) => void;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  },
+): Promise<string> {
   if (!isSafeAssetUrl(url)) {
     throw new Error(
       `Refusing to download from an untrusted URL: ${safeDisplayUrl(url)}`,
     );
   }
 
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: { "User-Agent": "notion-time-tracker" },
-  });
-  if (!res.ok) {
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(opts?.signal?.reason);
+  opts?.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(
+    () => controller.abort(new Error(`Download timed out after ${timeoutMs}ms`)),
+    timeoutMs,
+  );
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      redirect: "follow",
+      headers: { "User-Agent": "notion-time-tracker" },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    opts?.signal?.removeEventListener("abort", onAbort);
+    throw err;
+  }
+  if (!res.ok || !res.body) {
+    clearTimeout(timer);
+    opts?.signal?.removeEventListener("abort", onAbort);
     throw new Error(`Download failed: ${res.status} ${res.statusText}`);
   }
 
@@ -150,31 +200,53 @@ export async function downloadAssetToDownloads(url: string): Promise<string> {
     sanitizeFilename(decodeURIComponent(path.basename(new URL(url).pathname))) ||
     `download-${Date.now()}.bin`;
 
-  const tmpName = `.${baseName}.${randomBytes(8).toString("hex")}.part`;
-  const tmpPath = path.join(downloadsDir, tmpName);
+  const tmpPath = path.join(
+    downloadsDir,
+    `.${baseName}.${randomBytes(8).toString("hex")}.part`,
+  );
 
-  const buf = Buffer.from(await res.arrayBuffer());
+  const totalHeader = res.headers.get("content-length");
+  const totalBytes = totalHeader ? Number.parseInt(totalHeader, 10) : null;
+  let bytesDownloaded = 0;
+
+  // Node's WHATWG ReadableStream → Node Readable for pipeline compatibility.
+  const webStream = res.body;
+  const nodeReadable = Readable.fromWeb(
+    webStream as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
+  );
+
+  // Emit progress on each chunk without buffering the whole body.
+  nodeReadable.on("data", (chunk: Buffer) => {
+    bytesDownloaded += chunk.length;
+    opts?.onProgress?.({
+      bytesDownloaded,
+      totalBytes: Number.isFinite(totalBytes) ? totalBytes : null,
+    });
+  });
+
   try {
-    // `wx` fails if the temp file somehow already exists — prevents a race
-    // where two concurrent downloads pick the same temp name (astronomically
-    // unlikely given 16 hex chars, but fail-closed is cheap).
-    await fs.writeFile(tmpPath, buf, { flag: "wx" });
-    const finalPath = await pickAvailableDestination(downloadsDir, baseName);
-    await fs.rename(tmpPath, finalPath);
+    // `wx` flag on the write stream fails if the temp path already exists
+    // — guards against the pathologically-unlucky duplicate 16-byte suffix.
+    const out = createWriteStream(tmpPath, { flags: "wx" });
+    await pipeline(nodeReadable, out);
+    const finalPath = await atomicallyPlace(tmpPath, downloadsDir, baseName);
     return finalPath;
   } catch (err) {
-    // Best-effort cleanup on failure
     await fs.unlink(tmpPath).catch(() => {});
     throw err;
+  } finally {
+    clearTimeout(timer);
+    opts?.signal?.removeEventListener("abort", onAbort);
   }
 }
 
 /**
- * Find a filename in `dir` that doesn't already exist. Returns the full path
- * of the first free candidate, starting with `baseName` and falling back to
- * "<stem> (1)<ext>", "<stem> (2)<ext>", etc.
+ * Move `tmpPath` into `dir/baseName`, picking a versioned fallback name
+ * like "Foo (1).dmg" if the target already exists. Uses `rename` with
+ * `wx`-backed retries to avoid TOCTOU races against a concurrent writer.
  */
-async function pickAvailableDestination(
+async function atomicallyPlace(
+  tmpPath: string,
   dir: string,
   baseName: string,
 ): Promise<string> {
@@ -184,17 +256,50 @@ async function pickAvailableDestination(
     const candidateName = i === 0 ? baseName : `${stem} (${i})${ext}`;
     const candidate = path.join(dir, candidateName);
     try {
-      await fs.access(candidate);
-    } catch {
+      // Probe via `open({ flag: "wx" })` then close + unlink; if another
+      // process slipped in between, we loop. Plain fs.rename wouldn't
+      // fail on an existing target so we need this guard.
+      const fh = await fs.open(candidate, "wx");
+      await fh.close();
+      await fs.unlink(candidate);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") continue; // occupied, try the next number
+      if (code === "ENOENT") continue; // race in unlink, harmless
+      throw err;
+    }
+    try {
+      await fs.rename(tmpPath, candidate);
       return candidate;
+    } catch (err) {
+      // Another writer beat us to this slot; retry with the next name.
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw err;
     }
   }
   throw new Error(`Could not find a free filename in ${dir}`);
 }
 
 function sanitizeFilename(name: string): string {
-  // Strip path separators and NULs; collapse any directory-traversal tricks.
-  return name.replace(/[\\/\0]/g, "_").trim();
+  // Strip path separators, NUL, and control chars.
+  let clean = name.replace(/[\x00-\x1f\x7f\\/]/g, "_").trim();
+  // Windows strips trailing dots and spaces; do it here so the filename
+  // round-trips between platforms.
+  clean = clean.replace(/[. ]+$/g, "");
+  // Cap absurd lengths (most filesystems cap at 255 chars for a single
+  // path component; leave headroom for our temp-file suffix).
+  if (clean.length > 200) {
+    const ext = path.extname(clean);
+    clean = clean.slice(0, 200 - ext.length) + ext;
+  }
+  // Avoid the Windows reserved names by prefixing an underscore.
+  const stemLower = path
+    .basename(clean, path.extname(clean))
+    .toLowerCase();
+  if (WINDOWS_RESERVED.has(stemLower)) {
+    clean = `_${clean}`;
+  }
+  return clean;
 }
 
 function safeDisplayUrl(raw: string): string {
