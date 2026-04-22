@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { formatHMS } from "../lib/formatDuration";
 import type { TaskItem } from "../api";
+import { api } from "../api";
 
 interface Props {
   activeTask: TaskItem | null;
@@ -10,6 +11,9 @@ interface Props {
   isWriting: boolean;
 }
 
+// Space reserved on macOS for the hidden-inset traffic-light buttons.
+const MAC_TRAFFIC_LIGHT_PX = 78;
+
 export function ActiveTimerBar({
   activeTask,
   elapsedSeconds,
@@ -17,9 +21,13 @@ export function ActiveTimerBar({
   onStop,
   isWriting,
 }: Props): JSX.Element {
+  const isMac = api.platform === "darwin";
   return (
     <div className="drag-region sticky top-0 z-20 border-b border-bg-border bg-bg/80 backdrop-blur supports-[backdrop-filter]:bg-bg/60">
-      <div className="no-drag flex items-center gap-4 px-6 py-3">
+      <div
+        className="no-drag flex items-center gap-4 py-3 pr-6"
+        style={{ paddingLeft: isMac ? MAC_TRAFFIC_LIGHT_PX : 24 }}
+      >
         <div className="flex-1 min-w-0">
           {activeTask ? (
             <div className="flex flex-col gap-0.5">

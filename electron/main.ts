@@ -147,6 +147,21 @@ function registerIpc(): void {
     },
   );
 
+  ipcMain.handle(
+    "notion:updateTaskStatus",
+    async (
+      _evt,
+      payload: { taskId: string; status: string },
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      try {
+        await ensureNotion().updateTaskStatus(payload.taskId, payload.status);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message ?? String(err) };
+      }
+    },
+  );
+
   ipcMain.handle("queue:size", () => queue.size());
   ipcMain.handle("queue:flush", async () => {
     await tryFlushQueue();

@@ -25,6 +25,8 @@ export interface DbPairing {
   workSessionDbId: string;
   /** Relation-property name on Work Sessions that points back to Tasks */
   taskRelationName: string;
+  /** All Status option names in this teamspace's Tasks DB, in Notion's order. */
+  statusOptions: string[];
 }
 
 export interface DiscoverResult {
@@ -65,6 +67,13 @@ export interface TaskItem {
   teamspace: string;
   workSessionDbId: string;
   taskRelationName: string;
+  tasksDbId: string;
+  /** Minutes, from the "Time Estimate (min)" number property. */
+  timeEstimateMin: number | null;
+  /** Minutes, from the "Time Tracked" formula property. */
+  timeTrackedMin: number | null;
+  /** The Status option names available in this task's Tasks DB. */
+  statusOptions: string[];
 }
 
 export interface WriteSessionInput {

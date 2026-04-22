@@ -18,6 +18,7 @@ interface Props {
   anyTimerActive: boolean;
   onStart: (task: TaskItem) => void;
   onOpenInNotion: (url: string) => void;
+  onStatusChanged: (taskId: string, newStatus: string) => void;
 }
 
 export function TaskGroup({
@@ -26,6 +27,7 @@ export function TaskGroup({
   anyTimerActive,
   onStart,
   onOpenInNotion,
+  onStatusChanged,
 }: Props): JSX.Element {
   return (
     <section className="mb-6 last:mb-0">
@@ -50,6 +52,7 @@ export function TaskGroup({
             disabled={anyTimerActive}
             onStart={onStart}
             onOpenInNotion={onOpenInNotion}
+            onStatusChanged={onStatusChanged}
           />
         ))}
       </div>

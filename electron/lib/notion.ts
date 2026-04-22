@@ -142,11 +142,18 @@ export class NotionClient {
 
         const tasksDbId = taskRelation.relation.database_id;
         const label = labelForWorkSessionsDb(titleText);
+
+        // Retrieve the Tasks DB so we can extract its Status options
+        // (options differ across teamspaces, e.g. "In progress" vs
+        // "In Progress").
+        const statusOptions = await this.fetchStatusOptions(tasksDbId, warnings);
+
         pairings.push({
           label,
           tasksDbId,
           workSessionDbId: db.id,
           taskRelationName: "Task",
+          statusOptions,
         });
       } catch (err) {
         warnings.push(
@@ -220,6 +227,34 @@ export class NotionClient {
     if (typeFilter.length === 0) return flat;
     const allowed = new Set<string>(typeFilter);
     return flat.filter((t) => t.type !== null && allowed.has(t.type));
+  }
+
+  private async fetchStatusOptions(
+    tasksDbId: string,
+    warnings: string[],
+  ): Promise<string[]> {
+    try {
+      const db = (await this.client.databases.retrieve({
+        database_id: tasksDbId,
+      })) as DatabaseObjectResponse;
+      const statusProp = db.properties["Status"];
+      if (!statusProp || statusProp.type !== "status") return [];
+      return statusProp.status.options.map((o) => o.name);
+    } catch (err) {
+      warnings.push(
+        `Could not read Status options for tasks DB ${tasksDbId}: ${describeError(err)}`,
+      );
+      return [];
+    }
+  }
+
+  async updateTaskStatus(taskId: string, statusName: string): Promise<void> {
+    await this.client.pages.update({
+      page_id: taskId,
+      properties: {
+        Status: { status: { name: statusName } },
+      } as unknown as Parameters<typeof this.client.pages.update>[0]["properties"],
+    });
   }
 
   async createWorkSession(input: WriteSessionInput): Promise<void> {
@@ -342,6 +377,22 @@ function mapPageToTaskItem(
     }
   }
 
+  // Time Estimate (min) — number
+  let timeEstimateMin: number | null = null;
+  const teProp = props["Time Estimate (min)"];
+  if (teProp && teProp.type === "number" && teProp.number !== null) {
+    timeEstimateMin = teProp.number;
+  }
+
+  // Time Tracked — formula that rolls up session durations in minutes
+  let timeTrackedMin: number | null = null;
+  const ttProp = props["Time Tracked"];
+  if (ttProp && ttProp.type === "formula") {
+    if (ttProp.formula.type === "number" && ttProp.formula.number !== null) {
+      timeTrackedMin = ttProp.formula.number;
+    }
+  }
+
   return {
     id: page.id,
     title,
@@ -354,6 +405,13 @@ function mapPageToTaskItem(
     teamspace: pairing.label,
     workSessionDbId: pairing.workSessionDbId,
     taskRelationName: pairing.taskRelationName,
+    tasksDbId: pairing.tasksDbId,
+    timeEstimateMin,
+    timeTrackedMin,
+    // Old pairings saved before this field existed won't have statusOptions —
+    // fall back to an empty list so the dropdown degrades to a read-only label
+    // until the user clicks Discover again.
+    statusOptions: pairing.statusOptions ?? [],
   };
 }
 

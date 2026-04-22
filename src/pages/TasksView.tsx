@@ -99,6 +99,17 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
     setRefreshKey((k) => k + 1);
   }, []);
 
+  const handleStatusChanged = useCallback(
+    (taskId: string, newStatus: string) => {
+      // Optimistically update the in-memory list. If the new status is
+      // Complete or Blocked the row will disappear on next refresh.
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)),
+      );
+    },
+    [],
+  );
+
   return (
     <div className="flex h-full flex-col bg-bg text-white">
       <ActiveTimerBar
@@ -162,6 +173,7 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
               anyTimerActive={timer !== null}
               onStart={handleStart}
               onOpenInNotion={handleOpenInNotion}
+              onStatusChanged={handleStatusChanged}
             />
           ))
         )}

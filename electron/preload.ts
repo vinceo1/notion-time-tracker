@@ -22,7 +22,13 @@ const api = {
     tasks: (): Promise<TaskItem[]> => ipcRenderer.invoke("notion:tasks"),
     writeSession: (input: WriteSessionInput): Promise<WriteSessionResult> =>
       ipcRenderer.invoke("notion:writeSession", input),
+    updateTaskStatus: (
+      taskId: string,
+      status: string,
+    ): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke("notion:updateTaskStatus", { taskId, status }),
   },
+  platform: process.platform as NodeJS.Platform,
   queue: {
     size: (): Promise<number> => ipcRenderer.invoke("queue:size"),
     flush: (): Promise<number> => ipcRenderer.invoke("queue:flush"),
