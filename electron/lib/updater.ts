@@ -125,14 +125,21 @@ function pickAssetForPlatform(
     return anyDmg?.a;
   }
   if (platform === "win32") {
-    // Installer first, portable as a fallback.
-    const installer = names.find(
+    // Prefer the NSIS "Setup" installer. electron-builder doesn't put the
+    // arch into the filename for default NSIS output, so don't filter by
+    // arch — just pick the Setup variant, falling back to any non-portable
+    // exe, then any exe at all.
+    const setup = names.find(
+      (x) =>
+        x.name.toLowerCase().endsWith(".exe") && /setup/i.test(x.name),
+    );
+    if (setup) return setup.a;
+    const nonPortable = names.find(
       (x) =>
         x.name.toLowerCase().endsWith(".exe") &&
-        !/portable/i.test(x.name) &&
-        x.name.includes(arch.replace("x64", "x64")),
+        !/portable/i.test(x.name),
     );
-    if (installer) return installer.a;
+    if (nonPortable) return nonPortable.a;
     const anyExe = names.find((x) => x.name.toLowerCase().endsWith(".exe"));
     return anyExe?.a;
   }
