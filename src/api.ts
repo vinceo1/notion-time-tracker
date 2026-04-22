@@ -14,6 +14,8 @@ export type {
   DiscoverResult,
   NotionUser,
   TaskItem,
+  TaskQueryError,
+  TasksResult,
   TaskType,
   WriteSessionInput,
   WriteSessionResult,

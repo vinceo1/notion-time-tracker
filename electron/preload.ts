@@ -3,7 +3,7 @@ import type {
   AppConfig,
   DiscoverResult,
   NotionUser,
-  TaskItem,
+  TasksResult,
   WriteSessionInput,
   WriteSessionResult,
 } from "./lib/types.js";
@@ -20,7 +20,7 @@ const api = {
   notion: {
     listUsers: (): Promise<NotionUser[]> => ipcRenderer.invoke("notion:users"),
     discover: (): Promise<DiscoverResult> => ipcRenderer.invoke("notion:discover"),
-    tasks: (): Promise<TaskItem[]> => ipcRenderer.invoke("notion:tasks"),
+    tasks: (): Promise<TasksResult> => ipcRenderer.invoke("notion:tasks"),
     writeSession: (input: WriteSessionInput): Promise<WriteSessionResult> =>
       ipcRenderer.invoke("notion:writeSession", input),
     updateTaskStatus: (

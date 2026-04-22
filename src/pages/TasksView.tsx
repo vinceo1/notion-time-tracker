@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type AppConfig, type TaskItem } from "../api";
+import {
+  api,
+  type AppConfig,
+  type TaskItem,
+  type TaskQueryError,
+} from "../api";
 import { ActiveTimerBar } from "../components/ActiveTimerBar";
 import { TaskGroup } from "../components/TaskGroup";
 import { groupTasksByDueDate } from "../lib/groupTasksByDueDate";
@@ -17,6 +22,7 @@ interface TimerState {
 
 export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [taskErrors, setTaskErrors] = useState<TaskQueryError[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [timer, setTimer] = useState<TimerState | null>(null);
@@ -35,9 +41,10 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
     setError(null);
     api.notion
       .tasks()
-      .then((list) => {
+      .then((result) => {
         if (cancelled) return;
-        setTasks(list);
+        setTasks(result.tasks);
+        setTaskErrors(result.errors);
       })
       .catch((err: Error) => {
         if (cancelled) return;
@@ -154,6 +161,25 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
         {error ? (
           <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
             {error}
+          </div>
+        ) : null}
+
+        {taskErrors.length > 0 ? (
+          <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            <div className="mb-1 font-semibold">
+              Couldn't load tasks from {taskErrors.length} teamspace
+              {taskErrors.length === 1 ? "" : "s"}:
+            </div>
+            <ul className="space-y-0.5">
+              {taskErrors.map((e) => (
+                <li key={e.tasksDbId}>
+                  <span className="font-medium">{e.teamspace}</span> — {e.error}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-1 text-amber-200/70">
+              The rest of your tasks are shown below. Click Refresh to try again.
+            </div>
           </div>
         ) : null}
 

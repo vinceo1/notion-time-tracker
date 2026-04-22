@@ -13,7 +13,9 @@ import type {
   DiscoverResult,
   NotionUser,
   TaskItem,
+  TaskQueryError,
   TaskType,
+  TasksResult,
   WriteSessionInput,
 } from "./types.js";
 
@@ -175,58 +177,85 @@ export class NotionClient {
     pairings: DbPairing[];
     assigneeId: string | null;
     typeFilter: TaskType[];
-  }): Promise<TaskItem[]> {
+  }): Promise<TasksResult> {
     const { pairings, assigneeId, typeFilter } = opts;
-    if (pairings.length === 0) return [];
+    if (pairings.length === 0) return { tasks: [], errors: [] };
 
-    const all = await Promise.all(
-      pairings.map(async (pairing) => {
-        try {
-          // Type filter is applied client-side because the property name
-          // differs across teamspaces ("Type" vs "Task Type").
-          const filter = buildTaskFilter(assigneeId);
-          const params: QueryDatabaseParameters = {
-            database_id: pairing.tasksDbId,
-            page_size: 100,
-            sorts: [{ property: "Due", direction: "ascending" }],
-          };
-          if (filter) params.filter = filter;
+    const perPairing = await Promise.all(
+      pairings.map(
+        async (
+          pairing,
+        ): Promise<{ tasks: TaskItem[]; error: TaskQueryError | null }> => {
+          try {
+            // Type filter is applied client-side because the property name
+            // differs across teamspaces ("Type" vs "Task Type").
+            const filter = buildTaskFilter(assigneeId);
+            const params: QueryDatabaseParameters = {
+              database_id: pairing.tasksDbId,
+              page_size: 100,
+              sorts: [{ property: "Due", direction: "ascending" }],
+            };
+            if (filter) params.filter = filter;
 
-          const results: PageObjectResponse[] = [];
-          let cursor: string | undefined;
-          do {
-            const res: QueryDatabaseResponse = await this.client.databases.query({
-              ...params,
-              start_cursor: cursor,
-            });
-            for (const r of res.results as Array<
-              | PageObjectResponse
-              | PartialPageObjectResponse
-              | DatabaseObjectResponse
-              | PartialDatabaseObjectResponse
-            >) {
-              if ("properties" in r) results.push(r as PageObjectResponse);
-            }
-            cursor = res.has_more ? res.next_cursor ?? undefined : undefined;
-          } while (cursor);
+            const results: PageObjectResponse[] = [];
+            let cursor: string | undefined;
+            do {
+              const res: QueryDatabaseResponse = await this.client.databases.query({
+                ...params,
+                start_cursor: cursor,
+              });
+              for (const r of res.results as Array<
+                | PageObjectResponse
+                | PartialPageObjectResponse
+                | DatabaseObjectResponse
+                | PartialDatabaseObjectResponse
+              >) {
+                if ("properties" in r) results.push(r as PageObjectResponse);
+              }
+              cursor = res.has_more ? res.next_cursor ?? undefined : undefined;
+            } while (cursor);
 
-          return results.map((page) =>
-            mapPageToTaskItem(page, pairing),
-          );
-        } catch (err) {
-          console.warn(
-            `Failed to query tasks in ${pairing.label} (${pairing.tasksDbId}):`,
-            err,
-          );
-          return [] as TaskItem[];
-        }
-      }),
+            return {
+              tasks: results.map((page) => mapPageToTaskItem(page, pairing)),
+              error: null,
+            };
+          } catch (err) {
+            // Return a structured error per pairing so the UI can flag the
+            // outage (stale data / missing access / schema drift) instead of
+            // silently dropping that teamspace's rows.
+            console.warn(
+              `Failed to query tasks in ${pairing.label} (${pairing.tasksDbId}):`,
+              err,
+            );
+            return {
+              tasks: [],
+              error: {
+                teamspace: pairing.label,
+                tasksDbId: pairing.tasksDbId,
+                error: describeError(err),
+              },
+            };
+          }
+        },
+      ),
     );
 
-    const flat = all.flat();
-    if (typeFilter.length === 0) return flat;
-    const allowed = new Set<string>(typeFilter);
-    return flat.filter((t) => t.type !== null && allowed.has(t.type));
+    const allTasks = perPairing.flatMap((p) => p.tasks);
+    const errors = perPairing
+      .map((p) => p.error)
+      .filter((e): e is TaskQueryError => e !== null);
+
+    const filtered =
+      typeFilter.length === 0
+        ? allTasks
+        : (() => {
+            const allowed = new Set<string>(typeFilter);
+            return allTasks.filter(
+              (t) => t.type !== null && allowed.has(t.type),
+            );
+          })();
+
+    return { tasks: filtered, errors };
   }
 
   async fetchStatusOptions(

@@ -86,6 +86,19 @@ export interface WriteSessionInput {
   endIso: string;
 }
 
+/** Per-teamspace outcome of a task query. */
+export interface TaskQueryError {
+  teamspace: string;
+  tasksDbId: string;
+  error: string;
+}
+
+/** Combined result of querying tasks across every configured pairing. */
+export interface TasksResult {
+  tasks: TaskItem[];
+  errors: TaskQueryError[];
+}
+
 export type WriteSessionResult =
   | { ok: true }
   | { ok: false; queued: true };
