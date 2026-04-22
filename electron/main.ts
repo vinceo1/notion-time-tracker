@@ -4,6 +4,11 @@ import path from "node:path";
 import { NotionClient } from "./lib/notion.js";
 import { ConfigStore } from "./lib/storage.js";
 import { OfflineQueue } from "./lib/queue.js";
+import {
+  checkForUpdate,
+  downloadAssetToDownloads,
+  type UpdateCheckResult,
+} from "./lib/updater.js";
 import type {
   AppConfig,
   DiscoverResult,
@@ -126,10 +131,35 @@ function registerIpc(): void {
 
   ipcMain.handle("notion:tasks", async (): Promise<TaskItem[]> => {
     const cfg = configStore.get();
-    return ensureNotion().queryTasks({
-      pairings: cfg.pairings,
-      assigneeId: cfg.teamMemberId,
-      typeFilter: cfg.typeFilter,
+    const client = ensureNotion();
+
+    // Silent migration: some users have config.json entries saved before
+    // `statusOptions` existed on DbPairing. Fetch + persist the missing
+    // options so the in-app status dropdown lights up on next render.
+    const missing = cfg.pairings.filter(
+      (p) => !p.statusOptions || p.statusOptions.length === 0,
+    );
+    if (missing.length > 0) {
+      const warnings: string[] = [];
+      const refreshed = await Promise.all(
+        cfg.pairings.map(async (p) => {
+          if (p.statusOptions && p.statusOptions.length > 0) return p;
+          try {
+            const opts = await client.fetchStatusOptions(p.tasksDbId, warnings);
+            return { ...p, statusOptions: opts };
+          } catch {
+            return p;
+          }
+        }),
+      );
+      await configStore.update({ pairings: refreshed });
+    }
+
+    const current = configStore.get();
+    return client.queryTasks({
+      pairings: current.pairings,
+      assigneeId: current.teamMemberId,
+      typeFilter: current.typeFilter,
     });
   });
 
@@ -174,4 +204,28 @@ function registerIpc(): void {
   ipcMain.handle("app:openExternal", (_evt, url: string) => {
     shell.openExternal(url);
   });
+
+  ipcMain.handle("app:version", () => app.getVersion());
+
+  ipcMain.handle("updater:check", async (): Promise<UpdateCheckResult> => {
+    return checkForUpdate(app.getVersion(), process.platform, process.arch);
+  });
+
+  ipcMain.handle(
+    "updater:download",
+    async (
+      _evt,
+      url: string,
+    ): Promise<{ ok: true; filepath: string } | { ok: false; error: string }> => {
+      try {
+        const filepath = await downloadAssetToDownloads(url);
+        // Reveal the DMG / EXE in Finder / Explorer and open it so the user
+        // can drag-to-Applications (Mac) or run the installer (Windows).
+        shell.openPath(filepath).catch(() => {});
+        return { ok: true, filepath };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message ?? String(err) };
+      }
+    },
+  );
 }

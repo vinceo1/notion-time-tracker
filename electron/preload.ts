@@ -7,6 +7,7 @@ import type {
   WriteSessionInput,
   WriteSessionResult,
 } from "./lib/types.js";
+import type { UpdateCheckResult } from "./lib/updater.js";
 
 type QueueListener = (size: number) => void;
 
@@ -41,6 +42,14 @@ const api = {
   app: {
     openExternal: (url: string): Promise<void> =>
       ipcRenderer.invoke("app:openExternal", url),
+    version: (): Promise<string> => ipcRenderer.invoke("app:version"),
+  },
+  updater: {
+    check: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("updater:check"),
+    download: (
+      url: string,
+    ): Promise<{ ok: true; filepath: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke("updater:download", url),
   },
 };
 

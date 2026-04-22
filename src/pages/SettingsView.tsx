@@ -284,9 +284,135 @@ export function SettingsView({ config, onSaved, onClose }: Props): JSX.Element {
               })}
             </div>
           </Section>
+
+          <UpdatesSection />
         </div>
       </div>
     </div>
+  );
+}
+
+function UpdatesSection(): JSX.Element {
+  const [version, setVersion] = useState<string>("");
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<
+    import("../api").UpdateCheckResult | null
+  >(null);
+  const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadedPath, setDownloadedPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.app.version().then(setVersion).catch(() => setVersion("—"));
+  }, []);
+
+  async function handleCheck() {
+    setChecking(true);
+    setError(null);
+    setResult(null);
+    setDownloadedPath(null);
+    try {
+      const r = await api.updater.check();
+      setResult(r);
+    } catch (err) {
+      setError((err as Error).message ?? String(err));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function handleDownload() {
+    if (!result?.downloadUrl) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      const r = await api.updater.download(result.downloadUrl);
+      if (r.ok) {
+        setDownloadedPath(r.filepath);
+      } else {
+        setError(r.error);
+      }
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <Section
+      title="5. Updates"
+      description="Check GitHub for a newer release. Your Notion token and settings are preserved across installs."
+    >
+      <div className="flex flex-col gap-2">
+        <div className="text-xs text-white/60">
+          Current version: <span className="font-mono text-white/90">{version || "…"}</span>
+        </div>
+        <button
+          type="button"
+          className="btn self-start"
+          onClick={handleCheck}
+          disabled={checking}
+        >
+          {checking ? "Checking…" : "Check for updates"}
+        </button>
+
+        {error ? <div className="text-xs text-red-300">{error}</div> : null}
+
+        {result && result.reason === "no_releases" ? (
+          <div className="text-xs text-white/50">
+            No releases published yet on GitHub. Push a version tag (e.g. <span className="font-mono">v0.3.0</span>) to trigger a build — see the repo's release workflow.
+          </div>
+        ) : null}
+
+        {result && result.reason === "ok" && !result.hasUpdate ? (
+          <div className="text-xs text-emerald-300">
+            You're on the latest version.
+          </div>
+        ) : null}
+
+        {result && result.reason === "ok" && result.hasUpdate ? (
+          <div className="mt-1 flex flex-col gap-2 rounded-md border border-white/10 bg-bg-elev p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="text-sm font-medium text-white">
+                Version {result.latestVersion} available
+              </div>
+              <div className="text-[11px] text-white/40">
+                you're on {result.currentVersion}
+              </div>
+            </div>
+            {result.downloadUrl ? (
+              downloadedPath ? (
+                <div className="text-xs text-emerald-300">
+                  Saved to <span className="font-mono">{downloadedPath}</span>.
+                  The installer opened — drag the app into Applications to finish the update.
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary self-start"
+                  onClick={handleDownload}
+                  disabled={downloading}
+                >
+                  {downloading ? "Downloading…" : "Download & install"}
+                </button>
+              )
+            ) : (
+              <div className="text-xs text-amber-300">
+                Release doesn't include an installer for your platform yet.
+              </div>
+            )}
+            {result.releaseUrl ? (
+              <button
+                type="button"
+                className="btn-ghost self-start text-xs"
+                onClick={() => api.app.openExternal(result.releaseUrl!)}
+              >
+                View release notes
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 
