@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-electron
+release
+out
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Local app config (contains tokens)
+config.json
+queue.json
+userData/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
