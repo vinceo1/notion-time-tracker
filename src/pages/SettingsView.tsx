@@ -8,6 +8,9 @@ import {
   type TaskType,
 } from "../api";
 
+// Space reserved on macOS for the hidden-inset traffic-light buttons.
+const MAC_TRAFFIC_LIGHT_PX = 78;
+
 const ALL_TYPES: TaskType[] = [
   "To do List",
   "Scorecard",
@@ -116,16 +119,21 @@ export function SettingsView({ config, onSaved, onClose }: Props): JSX.Element {
   const canSave =
     tokenInput.trim().length > 0 && pairings.length > 0;
 
+  const isMac = api.platform === "darwin";
+
   return (
     <div className="flex h-full flex-col bg-bg text-white">
-      <header className="drag-region sticky top-0 z-10 flex items-center justify-between border-b border-bg-border bg-bg/90 px-6 py-3 backdrop-blur">
-        <div>
-          <h1 className="text-sm font-semibold tracking-tight">Settings</h1>
-          <p className="text-[11px] text-white/50">
+      <header
+        className="drag-region sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-bg-border bg-bg/90 py-3 pr-6 backdrop-blur"
+        style={{ paddingLeft: isMac ? MAC_TRAFFIC_LIGHT_PX : 24 }}
+      >
+        <div className="min-w-0">
+          <h1 className="truncate text-sm font-semibold tracking-tight">Settings</h1>
+          <p className="truncate text-[11px] text-white/50">
             Stored locally on this device — never in the repo.
           </p>
         </div>
-        <div className="no-drag flex gap-2">
+        <div className="no-drag flex shrink-0 gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>

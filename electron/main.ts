@@ -42,8 +42,11 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 980,
     height: 720,
-    minWidth: 720,
-    minHeight: 520,
+    // Keep the minimum small enough that the tracker can tuck into a
+    // corner of the screen. Settings headings and task rows both read
+    // OK down to about 340 px wide.
+    minWidth: 340,
+    minHeight: 360,
     title: "Notion Time Tracker",
     backgroundColor: "#0b0b0d",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",

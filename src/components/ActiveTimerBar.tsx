@@ -25,27 +25,29 @@ export function ActiveTimerBar({
   return (
     <div className="drag-region sticky top-0 z-20 border-b border-bg-border bg-bg/80 backdrop-blur supports-[backdrop-filter]:bg-bg/60">
       <div
-        className="no-drag flex items-center gap-4 py-3 pr-6"
-        style={{ paddingLeft: isMac ? MAC_TRAFFIC_LIGHT_PX : 24 }}
+        className="no-drag flex items-center gap-2 py-3 pr-3 sm:gap-4 sm:pr-6"
+        style={{ paddingLeft: isMac ? MAC_TRAFFIC_LIGHT_PX : 16 }}
       >
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           {activeTask ? (
             <div className="flex flex-col gap-0.5">
-              <div className="text-[11px] uppercase tracking-wider text-white/40">
+              <div className="truncate text-[10px] uppercase tracking-wider text-white/40 sm:text-[11px]">
                 Tracking · {activeTask.teamspace}
               </div>
-              <div className="truncate text-sm font-medium text-white/90">
+              <div className="truncate text-xs font-medium text-white/90 sm:text-sm">
                 {activeTask.title}
               </div>
             </div>
           ) : (
-            <div className="text-sm text-white/40">No active timer</div>
+            <div className="truncate text-xs text-white/40 sm:text-sm">
+              No active timer
+            </div>
           )}
         </div>
 
         <div
           className={clsx(
-            "font-mono text-2xl font-semibold tabular-nums tracking-tight",
+            "shrink-0 font-mono text-lg font-semibold tabular-nums tracking-tight sm:text-xl md:text-2xl",
             activeTask ? "text-white" : "text-white/30",
           )}
         >
@@ -55,7 +57,7 @@ export function ActiveTimerBar({
         {activeTask ? (
           <button
             type="button"
-            className="btn btn-danger no-drag"
+            className="btn btn-danger no-drag shrink-0 px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm"
             onClick={onStop}
             disabled={isWriting}
           >
@@ -65,10 +67,10 @@ export function ActiveTimerBar({
 
         {queuedCount > 0 ? (
           <span
-            className="pill no-drag border border-amber-400/40 bg-amber-400/10 text-amber-200"
+            className="pill no-drag shrink-0 border border-amber-400/40 bg-amber-400/10 text-amber-200"
             title={`${queuedCount} session${queuedCount === 1 ? "" : "s"} couldn't reach Notion and will retry automatically`}
           >
-            ● {queuedCount} queued
+            ● {queuedCount}
           </span>
         ) : null}
       </div>

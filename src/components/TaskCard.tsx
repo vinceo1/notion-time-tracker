@@ -72,14 +72,14 @@ export function TaskCard({
       </button>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <div className="truncate text-sm font-medium text-white/90">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="min-w-0 flex-1 truncate text-sm font-medium text-white/90">
             {task.title}
           </div>
           {task.priority ? (
             <span
               className={clsx(
-                "pill border",
+                "pill shrink-0 border",
                 PRIORITY_COLORS[task.priority] ?? "",
               )}
             >

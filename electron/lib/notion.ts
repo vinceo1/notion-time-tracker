@@ -229,7 +229,7 @@ export class NotionClient {
     return flat.filter((t) => t.type !== null && allowed.has(t.type));
   }
 
-  private async fetchStatusOptions(
+  async fetchStatusOptions(
     tasksDbId: string,
     warnings: string[],
   ): Promise<string[]> {
@@ -384,12 +384,16 @@ function mapPageToTaskItem(
     timeEstimateMin = teProp.number;
   }
 
-  // Time Tracked — formula that rolls up session durations in minutes
+  // Time Tracked — formula that rolls up session durations. Can be either
+  // a number (minutes) or a string in "HH:MM:SS" form, depending on which
+  // variant the user's DB formula outputs.
   let timeTrackedMin: number | null = null;
   const ttProp = props["Time Tracked"];
   if (ttProp && ttProp.type === "formula") {
     if (ttProp.formula.type === "number" && ttProp.formula.number !== null) {
       timeTrackedMin = ttProp.formula.number;
+    } else if (ttProp.formula.type === "string" && ttProp.formula.string) {
+      timeTrackedMin = parseHmsToMinutes(ttProp.formula.string);
     }
   }
 
@@ -418,6 +422,20 @@ function mapPageToTaskItem(
 function labelForWorkSessionsDb(title: string): string {
   // "Company Work Sessions" → "Company"
   return title.replace(/\s*work sessions\s*/i, "").trim() || title;
+}
+
+/**
+ * Parse a Notion formula that outputs "HH:MM:SS" (or "H:MM:SS") into minutes.
+ * Returns null on parse failure so callers can fall back gracefully.
+ */
+function parseHmsToMinutes(s: string): number | null {
+  const match = s.match(/^(\d+):(\d{1,2}):(\d{1,2})$/);
+  if (!match) return null;
+  const h = Number.parseInt(match[1], 10);
+  const m = Number.parseInt(match[2], 10);
+  const sec = Number.parseInt(match[3], 10);
+  if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(sec)) return null;
+  return h * 60 + m + sec / 60;
 }
 
 function describeError(err: unknown): string {
