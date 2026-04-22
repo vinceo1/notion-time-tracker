@@ -16,7 +16,9 @@ interface Props {
   bucket: TaskBucket;
   activeTaskId: string | null;
   anyTimerActive: boolean;
+  activeElapsedSeconds: number;
   onStart: (task: TaskItem) => void;
+  onStop: () => void;
   onOpenInNotion: (url: string) => void;
   onStatusChanged: (taskId: string, newStatus: string) => void;
 }
@@ -25,7 +27,9 @@ export function TaskGroup({
   bucket,
   activeTaskId,
   anyTimerActive,
+  activeElapsedSeconds,
   onStart,
+  onStop,
   onOpenInNotion,
   onStatusChanged,
 }: Props): JSX.Element {
@@ -44,17 +48,22 @@ export function TaskGroup({
         <span className="text-xs text-white/30">{bucket.tasks.length}</span>
       </header>
       <div className="flex flex-col gap-2">
-        {bucket.tasks.map((task) => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            isActive={task.id === activeTaskId}
-            disabled={anyTimerActive}
-            onStart={onStart}
-            onOpenInNotion={onOpenInNotion}
-            onStatusChanged={onStatusChanged}
-          />
-        ))}
+        {bucket.tasks.map((task) => {
+          const isActive = task.id === activeTaskId;
+          return (
+            <TaskCard
+              key={task.id}
+              task={task}
+              isActive={isActive}
+              disabled={anyTimerActive && !isActive}
+              elapsedSeconds={isActive ? activeElapsedSeconds : null}
+              onStart={onStart}
+              onStop={onStop}
+              onOpenInNotion={onOpenInNotion}
+              onStatusChanged={onStatusChanged}
+            />
+          );
+        })}
       </div>
     </section>
   );

@@ -3,6 +3,7 @@ import { format, isToday, parseISO } from "date-fns";
 import { useState } from "react";
 import type { TaskItem } from "../api";
 import { api } from "../api";
+import { formatHMS } from "../lib/formatDuration";
 
 const PRIORITY_COLORS: Record<string, string> = {
   Urgent: "text-red-300 bg-red-500/10 border-red-500/30",
@@ -15,7 +16,10 @@ interface Props {
   task: TaskItem;
   isActive: boolean;
   disabled: boolean;
+  /** Live seconds since the timer started. Null when this task isn't active. */
+  elapsedSeconds: number | null;
   onStart: (task: TaskItem) => void;
+  onStop: () => void;
   onOpenInNotion: (url: string) => void;
   onStatusChanged: (taskId: string, newStatus: string) => void;
 }
@@ -24,7 +28,9 @@ export function TaskCard({
   task,
   isActive,
   disabled,
+  elapsedSeconds,
   onStart,
+  onStop,
   onOpenInNotion,
   onStatusChanged,
 }: Props): JSX.Element {
@@ -49,26 +55,34 @@ export function TaskCard({
     onStatusChanged(task.id, next);
   }
 
+  function handleToggle() {
+    if (isActive) onStop();
+    else onStart(task);
+  }
+
   return (
     <div
       className={clsx(
         "group card flex items-center gap-3 transition",
-        isActive ? "border-white/70 ring-1 ring-white/40" : "hover:border-white/15",
+        isActive
+          ? "border-red-400/70 ring-1 ring-red-400/30"
+          : "hover:border-white/15",
       )}
     >
       <button
         type="button"
-        onClick={() => onStart(task)}
-        disabled={disabled && !isActive}
+        onClick={handleToggle}
+        disabled={disabled}
+        aria-label={isActive ? "Stop timer" : "Start timer"}
+        title={isActive ? "Stop timer" : "Start timer"}
         className={clsx(
           "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition",
           isActive
-            ? "border-white bg-white text-black"
+            ? "border-red-400 bg-red-500/90 text-white hover:bg-red-500"
             : "border-bg-border bg-bg-elev text-white/70 hover:border-white/40 hover:text-white disabled:opacity-30",
         )}
-        title={isActive ? "Currently tracking" : "Start timer"}
       >
-        {isActive ? <PulseDot /> : <PlayIcon />}
+        {isActive ? <StopSquare /> : <PlayIcon />}
       </button>
 
       <div className="flex-1 min-w-0">
@@ -76,6 +90,11 @@ export function TaskCard({
           <div className="min-w-0 flex-1 truncate text-sm font-medium text-white/90">
             {task.title}
           </div>
+          {isActive ? (
+            <span className="pill shrink-0 border border-red-400/50 bg-red-500/15 text-red-200">
+              ● REC
+            </span>
+          ) : null}
           {task.priority ? (
             <span
               className={clsx(
@@ -103,7 +122,21 @@ export function TaskCard({
           {dueLabel ? <span>· {dueLabel}</span> : null}
           {task.type ? <span>· {task.type}</span> : null}
 
-          {(task.timeEstimateMin !== null || task.timeTrackedMin !== null) && (
+          {isActive && elapsedSeconds !== null ? (
+            <span className="flex items-center gap-1 font-mono tabular-nums text-red-200">
+              ·
+              <ClockIcon />
+              <span className="font-semibold">
+                {formatHMS(elapsedSeconds)}
+              </span>
+              {task.timeEstimateMin !== null ? (
+                <span className="text-white/30">
+                  {" / "}
+                  {formatMinutes(task.timeEstimateMin)}
+                </span>
+              ) : null}
+            </span>
+          ) : task.timeEstimateMin !== null || task.timeTrackedMin !== null ? (
             <span className="flex items-center gap-1 text-white/40">
               ·
               <ClockIcon />
@@ -117,7 +150,7 @@ export function TaskCard({
                 ) : null}
               </span>
             </span>
-          )}
+          ) : null}
 
           {statusError ? (
             <span className="text-red-300" title={statusError}>
@@ -152,8 +185,6 @@ function StatusDropdown({
   disabled,
   onChange,
 }: StatusDropdownProps): JSX.Element {
-  // If the DB didn't provide options, fall back to a read-only label so we
-  // don't show an empty dropdown.
   if (options.length === 0) {
     return value ? <span>· {value}</span> : <span />;
   }
@@ -216,12 +247,17 @@ function PlayIcon(): JSX.Element {
   );
 }
 
-function PulseDot(): JSX.Element {
+function StopSquare(): JSX.Element {
   return (
-    <span className="flex h-3 w-3 items-center justify-center">
-      <span className="absolute inline-flex h-3 w-3 animate-ping rounded-full bg-red-500 opacity-40" />
-      <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
-    </span>
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
   );
 }
 

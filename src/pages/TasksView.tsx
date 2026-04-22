@@ -64,20 +64,22 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
 
   const handleStop = useCallback(async () => {
     if (!timer) return;
-    setIsWriting(true);
+    // Stop optimistically so the UI feels instant — if the Notion write
+    // fails it'll land in the offline queue and be retried silently.
+    const stopped = timer;
     const endedAt = Date.now();
+    setTimer(null);
+    setIsWriting(true);
     try {
       const result = await api.notion.writeSession({
-        taskId: timer.task.id,
-        taskTitle: timer.task.title,
-        workSessionDbId: timer.task.workSessionDbId,
-        taskRelationName: timer.task.taskRelationName,
+        taskId: stopped.task.id,
+        taskTitle: stopped.task.title,
+        workSessionDbId: stopped.task.workSessionDbId,
+        taskRelationName: stopped.task.taskRelationName,
         teamMemberId: config.teamMemberId,
-        startIso: new Date(timer.startedAt).toISOString(),
+        startIso: new Date(stopped.startedAt).toISOString(),
         endIso: new Date(endedAt).toISOString(),
       });
-      setTimer(null);
-      // Refresh queue size in case it was updated
       api.queue.size().then(setQueuedCount).catch(() => {});
       if (!result.ok) {
         setError(
@@ -88,6 +90,9 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
       setError((err as Error).message ?? "Failed to save session");
     } finally {
       setIsWriting(false);
+      // Re-fetch tasks so Time Tracked reflects the new session.
+      // Small delay to give Notion's formula a moment to settle.
+      window.setTimeout(() => setRefreshKey((k) => k + 1), 600);
     }
   }, [timer, config.teamMemberId]);
 
@@ -116,8 +121,6 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
         activeTask={timer?.task ?? null}
         elapsedSeconds={elapsed}
         queuedCount={queuedCount}
-        onStop={handleStop}
-        isWriting={isWriting}
       />
 
       <div className="flex items-center justify-between border-b border-bg-border bg-bg px-6 py-3">
@@ -171,7 +174,9 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
               bucket={bucket}
               activeTaskId={timer?.task.id ?? null}
               anyTimerActive={timer !== null}
+              activeElapsedSeconds={elapsed}
               onStart={handleStart}
+              onStop={handleStop}
               onOpenInNotion={handleOpenInNotion}
               onStatusChanged={handleStatusChanged}
             />
