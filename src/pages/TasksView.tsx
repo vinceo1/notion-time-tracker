@@ -6,39 +6,56 @@ import {
   type TaskItem,
   type TaskQueryError,
 } from "../api";
-import { ActiveTimerBar } from "../components/ActiveTimerBar";
 import { RecentsDropdown } from "../components/RecentsDropdown";
 import { TaskGroup } from "../components/TaskGroup";
 import { groupTasksByDueDate } from "../lib/groupTasksByDueDate";
-import { useTimer } from "../hooks/useTimer";
-
-interface Props {
-  config: AppConfig;
-  onOpenSettings: () => void;
-}
 
 interface TimerState {
   task: TaskItem;
   startedAt: number;
 }
 
-export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
+interface Props {
+  config: AppConfig;
+  /** Active timer (owned by App). null when idle. */
+  timer: TimerState | null;
+  /** Live elapsed seconds for the active timer. Matches App's useTimer. */
+  elapsedSeconds: number;
+  /** Full recent-tasks list from stats (owned by App). */
+  recents: RecentTask[];
+  /** Increments whenever App wants TasksView to refetch the task list. */
+  refreshKey: number;
+  /** Error surfaced by the most-recent Stop (owned by App). */
+  topError: string | null;
+  onStart: (task: TaskItem) => void;
+  onStop: () => void;
+  onRefresh: () => void;
+  onOpenSettings: () => void;
+  onClearTopError: () => void;
+}
+
+export function TasksView({
+  config,
+  timer,
+  elapsedSeconds,
+  recents,
+  refreshKey,
+  topError,
+  onStart,
+  onStop,
+  onRefresh,
+  onOpenSettings,
+  onClearTopError,
+}: Props): JSX.Element {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [taskErrors, setTaskErrors] = useState<TaskQueryError[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [timer, setTimer] = useState<TimerState | null>(null);
-  const [isWriting, setIsWriting] = useState<boolean>(false);
-  const [queuedCount, setQueuedCount] = useState<number>(0);
-  const [refreshKey, setRefreshKey] = useState<number>(0);
-  const [todayBaseline, setTodayBaseline] = useState<number>(0);
-  const [recents, setRecents] = useState<RecentTask[]>([]);
-
-  const elapsed = useTimer(timer?.startedAt ?? null, timer !== null);
 
   const groups = useMemo(() => groupTasksByDueDate(tasks), [tasks]);
 
-  // Load tasks
+  // Load tasks. refreshKey is owned by App so the parent can trigger a
+  // refetch after a stop without round-tripping through renderer state.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -63,95 +80,24 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
     };
   }, [refreshKey, config.teamMemberId, config.typeFilter, config.pairings]);
 
-  // Load queue size + subscribe to updates
-  useEffect(() => {
-    api.queue.size().then(setQueuedCount).catch(() => {});
-    return api.queue.onUpdated(setQueuedCount);
-  }, []);
-
-  // Prime today's total + recent-tasks list, and subscribe to changes
-  // pushed from the main process whenever a session finishes.
-  useEffect(() => {
-    api.stats
-      .today()
-      .then((t) => setTodayBaseline(t.totalSeconds))
-      .catch(() => {});
-    api.stats
-      .recent()
-      .then(setRecents)
-      .catch(() => {});
-    const offToday = api.stats.onTodayUpdated((t) =>
-      setTodayBaseline(t.totalSeconds),
-    );
-    const offRecent = api.stats.onRecentUpdated(setRecents);
-    return () => {
-      offToday();
-      offRecent();
-    };
-  }, []);
-
-  const handleStart = useCallback((task: TaskItem) => {
-    setTimer({ task, startedAt: Date.now() });
-  }, []);
-
-  const handleStop = useCallback(async () => {
-    if (!timer) return;
-    // Stop optimistically so the UI feels instant — if the Notion write
-    // fails it'll land in the offline queue and be retried silently.
-    const stopped = timer;
-    const endedAt = Date.now();
-    setTimer(null);
-    setIsWriting(true);
-    try {
-      const result = await api.notion.writeSession({
-        taskId: stopped.task.id,
-        taskTitle: stopped.task.title,
-        workSessionDbId: stopped.task.workSessionDbId,
-        taskRelationName: stopped.task.taskRelationName,
-        teamMemberId: config.teamMemberId,
-        startIso: new Date(stopped.startedAt).toISOString(),
-        endIso: new Date(endedAt).toISOString(),
-      });
-      api.queue.size().then(setQueuedCount).catch(() => {});
-      if (!result.ok) {
-        setError(
-          "Couldn't reach Notion — your session was saved locally and will be sent automatically when the connection comes back.",
-        );
-      }
-    } catch (err) {
-      setError((err as Error).message ?? "Failed to save session");
-    } finally {
-      setIsWriting(false);
-      // Re-fetch tasks so Time Tracked reflects the new session.
-      // Small delay to give Notion's formula a moment to settle.
-      window.setTimeout(() => setRefreshKey((k) => k + 1), 600);
-    }
-  }, [timer, config.teamMemberId]);
-
   const handleOpenInNotion = useCallback((url: string) => {
     api.app.openExternal(url);
   }, []);
 
   const handleRefresh = useCallback(() => {
-    setRefreshKey((k) => k + 1);
-    // Also re-pull today's total and recent-tasks list from Notion so
-    // the Refresh button picks up sessions created since launch from
-    // other devices or from Notion's built-in Start/Stop buttons.
-    api.stats
-      .hydrate()
-      .then(({ today, recent }) => {
-        setTodayBaseline(today.totalSeconds);
-        setRecents(recent);
-      })
-      .catch(() => {
-        /* ignored — hydrate is a best-effort refresh */
-      });
-  }, []);
+    onRefresh();
+    // Re-pull today's total and recent tasks from Notion so new sessions
+    // created via Notion's Start/Stop buttons or from another device
+    // show up without a full app restart.
+    api.stats.hydrate().catch(() => {
+      /* best-effort */
+    });
+  }, [onRefresh]);
 
   const handleStatusChanged = useCallback(
     (taskId: string, newStatus: string) => {
-      // Optimistically update the in-memory list. If the new status is
-      // Complete or Blocked the row will disappear on next refresh.
+      // Optimistic: new status in-memory so the chip updates immediately.
+      // Complete/Blocked entries disappear on next refresh via the filter.
       setTasks((prev) =>
         prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)),
       );
@@ -161,17 +107,15 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
 
   const handleRecentPick = useCallback(
     (r: RecentTask) => {
-      if (timer) return; // one active timer at a time
-      // If the task is still in the loaded list, prefer that copy so the
-      // TaskCard re-renders with REC highlight + live timer.
+      if (timer) return;
       const fromList = tasks.find((t) => t.id === r.taskId);
       if (fromList) {
-        setTimer({ task: fromList, startedAt: Date.now() });
+        onStart(fromList);
         return;
       }
-      // Otherwise build a synthetic TaskItem from the recent entry and
-      // the pairing's cached status options. Enough data to start + stop;
-      // the next Refresh fills in the real details.
+      // Recent tasks aren't always in the currently-filtered list (floating
+      // items like "Email" without a due date). Synthesise a TaskItem from
+      // the RecentTask + pairing metadata so Start/Stop still work.
       const pairing = config.pairings.find(
         (p) => p.workSessionDbId === r.workSessionDbId,
       );
@@ -194,22 +138,13 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
         clientName: r.clientName,
         statusOptions: pairing?.statusOptions ?? [],
       };
-      setTimer({ task: synthetic, startedAt: Date.now() });
+      onStart(synthetic);
     },
-    [timer, tasks, config.pairings],
+    [timer, tasks, config.pairings, onStart],
   );
 
   return (
-    <div className="flex h-full flex-col bg-bg text-white">
-      <ActiveTimerBar
-        activeTask={timer?.task ?? null}
-        currentSessionSeconds={elapsed}
-        todayBaselineSeconds={todayBaseline}
-        queuedCount={queuedCount}
-        onStop={handleStop}
-        isWriting={isWriting}
-      />
-
+    <div className="flex flex-1 flex-col overflow-hidden bg-bg text-white">
       <div className="flex items-center justify-between border-b border-bg-border bg-bg px-6 py-3">
         <div className="text-xs uppercase tracking-wider text-white/50">
           Your tasks
@@ -243,6 +178,22 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
+        {topError ? (
+          <div
+            className="mb-4 flex items-start justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+            role="alert"
+          >
+            <span className="min-w-0 flex-1">{topError}</span>
+            <button
+              type="button"
+              className="shrink-0 text-xs text-red-200/60 hover:text-red-200"
+              onClick={onClearTopError}
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
+
         {error ? (
           <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
             {error}
@@ -287,9 +238,9 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
               bucket={bucket}
               activeTaskId={timer?.task.id ?? null}
               anyTimerActive={timer !== null}
-              activeElapsedSeconds={elapsed}
-              onStart={handleStart}
-              onStop={handleStop}
+              activeElapsedSeconds={elapsedSeconds}
+              onStart={onStart}
+              onStop={onStop}
               onOpenInNotion={handleOpenInNotion}
               onStatusChanged={handleStatusChanged}
             />

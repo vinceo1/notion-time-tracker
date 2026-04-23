@@ -20,11 +20,21 @@ const ALL_TYPES: TaskType[] = [
 
 interface Props {
   config: AppConfig;
+  /** True when a timer is currently running — Settings needs it so an
+   * update doesn't quit the app mid-session and drop the in-flight time. */
+  hasActiveTimer: boolean;
+  onStopTimer: () => Promise<void>;
   onSaved: (next: AppConfig) => void;
   onClose: () => void;
 }
 
-export function SettingsView({ config, onSaved, onClose }: Props): JSX.Element {
+export function SettingsView({
+  config,
+  hasActiveTimer,
+  onStopTimer,
+  onSaved,
+  onClose,
+}: Props): JSX.Element {
   const [tokenInput, setTokenInput] = useState(config.notionToken);
   const [teamMemberId, setTeamMemberId] = useState(config.teamMemberId ?? "");
   const [parentUrl, setParentUrl] = useState(config.workSessionsParentUrl);
@@ -122,7 +132,7 @@ export function SettingsView({ config, onSaved, onClose }: Props): JSX.Element {
   const isMac = api.platform === "darwin";
 
   return (
-    <div className="flex h-full flex-col bg-bg text-white">
+    <div className="flex flex-1 flex-col overflow-hidden bg-bg text-white">
       <header
         className="drag-region sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-bg-border bg-bg/90 py-3 pr-6 backdrop-blur"
         style={{ paddingLeft: isMac ? MAC_TRAFFIC_LIGHT_PX : 24 }}
@@ -285,14 +295,23 @@ export function SettingsView({ config, onSaved, onClose }: Props): JSX.Element {
             </div>
           </Section>
 
-          <UpdatesSection />
+          <UpdatesSection
+            hasActiveTimer={hasActiveTimer}
+            onStopTimer={onStopTimer}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function UpdatesSection(): JSX.Element {
+function UpdatesSection({
+  hasActiveTimer,
+  onStopTimer,
+}: {
+  hasActiveTimer: boolean;
+  onStopTimer: () => Promise<void>;
+}): JSX.Element {
   const [version, setVersion] = useState<string>("");
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<
@@ -334,6 +353,18 @@ function UpdatesSection(): JSX.Element {
 
   async function handleDownload() {
     if (!result?.downloadUrl) return;
+    // Crucial: if a timer is still running when the user clicks
+    // Download & install, stop + save it first. Otherwise the app
+    // quits for the update mid-session and the in-flight minutes
+    // vanish — never hit the local stats, never hit Notion. Users
+    // see this as "today's total reset after the update."
+    if (hasActiveTimer) {
+      try {
+        await onStopTimer();
+      } catch {
+        /* stop has its own error surface; let download proceed anyway */
+      }
+    }
     setDownloading(true);
     setError(null);
     setDownloadedPath(null);
