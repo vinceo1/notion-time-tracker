@@ -13,6 +13,14 @@ on:
   push:
     tags:
       - "v*"
+  # Manual fallback when a push-tag event gets swallowed by GitHub
+  # (it happens; `gh workflow run release.yml -f tag=v0.4.14`).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to (re)build, e.g. v0.4.14"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,6 +31,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the supplied tag. On tag-push,
+          # github.ref already points at the tag so this is a no-op.
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -46,6 +58,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: release/*.dmg
           generate_release_notes: true
 
@@ -54,6 +67,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the supplied tag. On tag-push,
+          # github.ref already points at the tag so this is a no-op.
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -75,6 +92,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           # Only the Setup installer — skip the portable variant to keep
           # the release page free of files non-devs might grab by mistake.
           files: release/*Setup*.exe
