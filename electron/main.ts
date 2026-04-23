@@ -1,6 +1,10 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+
+const pexecFile = promisify(execFile);
 import { NotionClient } from "./lib/notion.js";
 import { ConfigStore } from "./lib/storage.js";
 import { OfflineQueue } from "./lib/queue.js";
@@ -432,6 +436,22 @@ function registerIpc(): void {
             });
           },
         });
+
+        // On macOS, strip the com.apple.quarantine attribute from the
+        // downloaded DMG. Without this, Gatekeeper treats the unsigned
+        // .app inside as "damaged" once the user drags it to
+        // /Applications, and no right-click-Open workaround saves them.
+        // `xattr -c` clears all xattrs and is a no-op on files that
+        // don't have any, so it can't throw for "attribute missing".
+        if (process.platform === "darwin") {
+          try {
+            await pexecFile("xattr", ["-c", filepath]);
+          } catch (e) {
+            console.warn("xattr -c failed on downloaded asset:", e);
+            // Non-fatal — user can strip manually if needed.
+          }
+        }
+
         shell.openPath(filepath).catch(() => {});
         return { ok: true, filepath };
       } catch (err) {
