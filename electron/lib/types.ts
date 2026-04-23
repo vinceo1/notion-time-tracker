@@ -137,6 +137,13 @@ export interface RecentTask {
   taskRelationName: string;
   clientName: string | null;
   lastTrackedAt: string;
+  /**
+   * Total time the user has tracked on this task in minutes, read from
+   * the task's `Time Tracked` formula during Notion hydration. Null
+   * when the entry was added locally via touchRecent and hasn't been
+   * refreshed from Notion yet.
+   */
+  timeTrackedMin: number | null;
 }
 
 export interface TodayStats {

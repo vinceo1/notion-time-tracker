@@ -347,6 +347,12 @@ function registerIpc(): void {
 
       const knownTask = lastTasks.get(trustedInput.taskId);
       const recentClientName = knownTask?.clientName ?? null;
+      // Pre-fill timeTrackedMin with whatever we last saw for this task
+      // so the Recent dropdown doesn't temporarily blank it out between
+      // a fresh stop and the next Notion rehydrate.
+      const existing = stats
+        .getRecent()
+        .find((r) => r.taskId === trustedInput.taskId);
       const newRecent = await stats.touchRecent({
         taskId: trustedInput.taskId,
         title: trustedInput.taskTitle,
@@ -355,6 +361,9 @@ function registerIpc(): void {
         tasksDbId: pairing.tasksDbId,
         taskRelationName: pairing.taskRelationName,
         clientName: recentClientName,
+        timeTrackedMin:
+          (existing?.timeTrackedMin ?? knownTask?.timeTrackedMin ?? 0) +
+          durationSec / 60,
       });
       win?.webContents.send("stats:recent", newRecent);
 
@@ -497,11 +506,6 @@ function registerIpc(): void {
         // bypasses Finder's drag-to-Applications path which trips on
         // -36 ("data could not be read or written") when trying to
         // overwrite the currently-running .app bundle.
-        //
-        // If the programmatic install fails for any reason (weird DMG
-        // layout, /Applications not writable, missing hdiutil, etc.)
-        // we fall back to opening the DMG in Finder so the user can
-        // drag the app manually — same behaviour as pre-0.4.8.
         if (process.platform === "darwin") {
           const outcome = await installDmgViaDitto(filepath);
           if (outcome.ok) {
@@ -517,13 +521,20 @@ function registerIpc(): void {
             return { ok: true, filepath, installing: true };
           }
           console.warn(
-            "Programmatic DMG install failed, falling back to Finder:",
+            "Programmatic DMG install failed:",
             outcome.error,
           );
+          // Surface the error back to the UI instead of silently
+          // falling through to Finder (which triggers -36 again).
+          // If the user then wants to retry via Finder anyway they
+          // can open the DMG manually from ~/Downloads.
+          return {
+            ok: false,
+            error: `Auto-install failed: ${outcome.error ?? "unknown error"}. The DMG is at ${filepath}.`,
+          };
         }
 
-        // Non-macOS or programmatic install failed: let Finder / the
-        // OS installer handle it the traditional way.
+        // Non-macOS path: let the OS installer handle it.
         shell.openPath(filepath).catch(() => {});
         return { ok: true, filepath, installing: false };
       } catch (err) {

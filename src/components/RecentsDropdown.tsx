@@ -73,6 +73,7 @@ export function RecentsDropdown({
                 const context = [r.clientName, r.teamspace]
                   .filter(Boolean)
                   .join(" · ");
+                const tracked = formatMinutes(r.timeTrackedMin);
                 return (
                   <li key={r.taskId}>
                     <button
@@ -97,10 +98,17 @@ export function RecentsDropdown({
                       </div>
                       <div className="flex w-full items-center gap-2 text-[11px] text-white/40">
                         {context ? (
-                          <span className="min-w-0 flex-1 truncate">{context}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {context}
+                          </span>
                         ) : (
                           <span className="min-w-0 flex-1" />
                         )}
+                        {tracked ? (
+                          <span className="shrink-0 whitespace-nowrap font-mono tabular-nums text-white/50">
+                            ⏱ {tracked}
+                          </span>
+                        ) : null}
                         <span className="shrink-0 whitespace-nowrap text-[10px]">
                           {formatRelative(r.lastTrackedAt)}
                         </span>
@@ -115,6 +123,16 @@ export function RecentsDropdown({
       ) : null}
     </div>
   );
+}
+
+function formatMinutes(minutes: number | null): string | null {
+  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return null;
+  const rounded = Math.round(minutes);
+  if (rounded < 60) return `${rounded}m`;
+  const hours = Math.floor(rounded / 60);
+  const remMin = rounded % 60;
+  if (remMin === 0) return `${hours}h`;
+  return `${hours}h ${remMin}m`;
 }
 
 function formatRelative(iso: string): string {

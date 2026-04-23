@@ -43,15 +43,24 @@ export async function installDmgViaDitto(
   let mountPoint: string | null = null;
 
   try {
-    // 1. Mount the DMG silently (no Finder window).
+    // 1. Mount the DMG without a Finder window. Earlier versions used
+    //    `-quiet`, but that suppresses the tabular "mounted at
+    //    /Volumes/..." stdout we need to parse → every install fell
+    //    through to the Finder fallback. We keep `-nobrowse` (no
+    //    automount in Finder) and drop -quiet.
     const { stdout } = await pexecFile(
       "hdiutil",
-      ["attach", dmgPath, "-nobrowse", "-quiet", "-readonly"],
+      ["attach", dmgPath, "-nobrowse", "-readonly"],
       { maxBuffer: 10 * 1024 * 1024 },
     );
     mountPoint = parseMountPoint(stdout);
     if (!mountPoint) {
-      throw new Error("hdiutil attach did not report a /Volumes path");
+      throw new Error(
+        `hdiutil attach did not report a /Volumes path. stdout was:\n${stdout.slice(
+          0,
+          2000,
+        )}`,
+      );
     }
 
     // 2. Find the .app inside the mounted DMG.

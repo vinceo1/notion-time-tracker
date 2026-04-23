@@ -561,6 +561,7 @@ export class NotionClient {
       taskRelationName: string;
       clientName: string | null;
       lastTrackedAt: string;
+      timeTrackedMin: number | null;
     }>
   > {
     if (pairings.length === 0) return [];
@@ -643,15 +644,24 @@ export class NotionClient {
       sorted.map((s) => s.taskId),
     );
 
-    // For client name resolution, fetch the pages again (cheap — batched).
+    // For each unique task we want two bits of metadata off the page:
+    //   - the Client / Brand relation (so the dropdown can show the
+    //     brand name next to the teamspace),
+    //   - the `Time Tracked` formula (so the dropdown can show how
+    //     long the user has worked on the task in total).
+    // Both come from the same page, so fetch once per taskId.
     const clientByTask = new Map<string, string | null>();
+    const timeTrackedByTask = new Map<string, number | null>();
     await Promise.all(
       sorted.map(async (s) => {
         try {
           const page = await this.client.pages.retrieve({ page_id: s.taskId });
           if (!("properties" in page)) return;
+          const props = (page as PageObjectResponse).properties;
+
+          // Client / Brand
           for (const name of CLIENT_RELATION_NAMES) {
-            const p = (page as PageObjectResponse).properties[name];
+            const p = props[name];
             if (
               p?.type === "relation" &&
               Array.isArray(p.relation) &&
@@ -664,7 +674,27 @@ export class NotionClient {
                 s.taskId,
                 clientTitles.get(p.relation[0].id) ?? null,
               );
-              return;
+              break;
+            }
+          }
+
+          // Time Tracked — handles both number-formula and HH:MM:SS
+          // string-formula shapes (same split as mapPageToTaskItem).
+          const ttProp = props["Time Tracked"];
+          if (ttProp && ttProp.type === "formula") {
+            if (
+              ttProp.formula.type === "number" &&
+              ttProp.formula.number !== null
+            ) {
+              timeTrackedByTask.set(s.taskId, ttProp.formula.number);
+            } else if (
+              ttProp.formula.type === "string" &&
+              ttProp.formula.string
+            ) {
+              timeTrackedByTask.set(
+                s.taskId,
+                parseHmsToMinutes(ttProp.formula.string),
+              );
             }
           }
         } catch {
@@ -682,6 +712,7 @@ export class NotionClient {
       taskRelationName: s.pairing.taskRelationName,
       clientName: clientByTask.get(s.taskId) ?? null,
       lastTrackedAt: s.lastTrackedAt,
+      timeTrackedMin: timeTrackedByTask.get(s.taskId) ?? null,
     }));
   }
 
