@@ -481,18 +481,31 @@ function registerIpc(): void {
           },
         });
 
-        // On macOS, strip the com.apple.quarantine attribute from the
-        // downloaded DMG. Without this, Gatekeeper treats the unsigned
-        // .app inside as "damaged" once the user drags it to
-        // /Applications, and no right-click-Open workaround saves them.
-        // `xattr -c` clears all xattrs and is a no-op on files that
-        // don't have any, so it can't throw for "attribute missing".
+        // On macOS, strip ONLY the com.apple.quarantine attribute from
+        // the downloaded DMG. Gatekeeper uses that attribute to decide
+        // whether to block first launch ("damaged and can't be opened")
+        // for unsigned apps.
+        //
+        // Earlier versions used `xattr -c` (clear *all* xattrs) for this,
+        // but that also wiped Finder-copy metadata the DMG container
+        // needs, and triggered error -36 ("data could not be read or
+        // written") when the user drags the .app to /Applications. The
+        // targeted delete below is safe: if the attribute isn't present,
+        // `xattr -d` errors with "No such xattr" and we ignore it.
         if (process.platform === "darwin") {
           try {
-            await pexecFile("xattr", ["-c", filepath]);
+            await pexecFile("xattr", [
+              "-d",
+              "com.apple.quarantine",
+              filepath,
+            ]);
           } catch (e) {
-            console.warn("xattr -c failed on downloaded asset:", e);
-            // Non-fatal — user can strip manually if needed.
+            // Attribute wasn't set → nothing to do. Any other failure is
+            // non-fatal: user can strip manually if Gatekeeper complains.
+            const msg = (e as Error).message ?? "";
+            if (!/No such xattr/i.test(msg)) {
+              console.warn("xattr -d quarantine failed:", e);
+            }
           }
         }
 
