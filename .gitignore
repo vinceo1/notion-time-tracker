@@ -21,3 +21,9 @@ build/icon.iconset/
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# pCloud sync-conflict artifacts (the repo lives inside a pCloud dir
+# on the developer's machine; pCloud writes these files when two
+# devices touch the same file). Never belong in source control.
+*[conflicted]*
+*[conflicted [0-9]]*
