@@ -134,6 +134,18 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
 
   const handleRefresh = useCallback(() => {
     setRefreshKey((k) => k + 1);
+    // Also re-pull today's total and recent-tasks list from Notion so
+    // the Refresh button picks up sessions created since launch from
+    // other devices or from Notion's built-in Start/Stop buttons.
+    api.stats
+      .hydrate()
+      .then(({ today, recent }) => {
+        setTodayBaseline(today.totalSeconds);
+        setRecents(recent);
+      })
+      .catch(() => {
+        /* ignored — hydrate is a best-effort refresh */
+      });
   }, []);
 
   const handleStatusChanged = useCallback(

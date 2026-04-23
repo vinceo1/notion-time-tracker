@@ -49,8 +49,10 @@ export function RecentsDropdown({
         title="Recent tasks"
       >
         <HistoryIcon />
-        <span className="text-xs">Recent</span>
-        <ChevronIcon />
+        <span className="flex items-center gap-0.5 text-xs">
+          Recent
+          <ChevronIcon />
+        </span>
       </button>
 
       {open ? (

@@ -47,6 +47,8 @@ const api = {
   stats: {
     today: (): Promise<TodayStats> => ipcRenderer.invoke("stats:today"),
     recent: (): Promise<RecentTask[]> => ipcRenderer.invoke("stats:recent"),
+    hydrate: (): Promise<{ today: TodayStats; recent: RecentTask[] }> =>
+      ipcRenderer.invoke("stats:hydrate"),
     onTodayUpdated: (cb: (t: TodayStats) => void): (() => void) => {
       const listener = (_: unknown, t: TodayStats) => cb(t);
       ipcRenderer.on("stats:today", listener);

@@ -479,9 +479,21 @@ export class NotionClient {
             },
           ];
           if (teamMemberId) {
+            // Include sessions without Team Member set too — Notion
+            // automations (e.g. the Start button on a task) don't
+            // always populate the person property, and we don't want
+            // to drop those off today's total.
             andClauses.push({
-              property: "Team Member",
-              people: { contains: teamMemberId },
+              or: [
+                {
+                  property: "Team Member",
+                  people: { contains: teamMemberId },
+                },
+                {
+                  property: "Team Member",
+                  people: { is_empty: true },
+                },
+              ],
             });
           }
           const filter = { and: andClauses } as QueryDatabaseParameters["filter"];
@@ -569,9 +581,21 @@ export class NotionClient {
             sorts: [{ property: "Start Time", direction: "descending" }],
           };
           if (teamMemberId) {
+            // Match sessions tagged to the user OR sessions where
+            // Team Member wasn't populated by whichever automation
+            // created them. Misses shared sessions assigned to
+            // someone else, which is the point.
             params.filter = {
-              property: "Team Member",
-              people: { contains: teamMemberId },
+              or: [
+                {
+                  property: "Team Member",
+                  people: { contains: teamMemberId },
+                },
+                {
+                  property: "Team Member",
+                  people: { is_empty: true },
+                },
+              ],
             } as QueryDatabaseParameters["filter"];
           }
           const res = await this.client.databases.query(params);

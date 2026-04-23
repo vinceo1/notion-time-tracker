@@ -410,6 +410,16 @@ function registerIpc(): void {
 
   ipcMain.handle("stats:today", (): TodayStats => stats.getToday());
   ipcMain.handle("stats:recent", (): RecentTask[] => stats.getRecent());
+  ipcMain.handle(
+    "stats:hydrate",
+    async (): Promise<{ today: TodayStats; recent: RecentTask[] }> => {
+      await hydrateFromNotion();
+      return {
+        today: stats.getToday(),
+        recent: stats.getRecent(),
+      };
+    },
+  );
 
   ipcMain.handle("queue:size", () => queue.size());
   ipcMain.handle("queue:flush", async () => {
