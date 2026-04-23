@@ -526,6 +526,9 @@ function buildTaskFilter(
 // Type property names ("Type" vs "Task Type").
 const TYPE_PROPERTY_NAMES = ["Type", "Task Type"];
 const DUE_PROPERTY_NAMES = ["Due", "Due Date", "Deadline"];
+// The "which brand is this task for" relation has been renamed across
+// teamspaces (Client → Brand). Accept both; first hit wins.
+const CLIENT_RELATION_NAMES = ["Brand", "Client"];
 
 const NOTION_COLORS: NotionColor[] = [
   "default",
@@ -648,18 +651,23 @@ function mapPageToTaskItem(
     }
   }
 
-  // Client relation ID (Client teamspace has a "Client" relation pointing
-  // to the Clients DB). We capture the first related page id here; the
-  // outer queryTasks() resolves the ID to a display name in bulk.
+  // Brand / Client relation ID (the Client teamspace has a relation
+  // pointing to the Clients/Brands DB; the property has been named
+  // "Client" historically and "Brand" after the 2026-04 rename). We
+  // capture the first related page id here; the outer queryTasks()
+  // resolves the ID to a display name in bulk.
   let clientRelationId: string | null = null;
-  const clientProp = props["Client"];
-  if (
-    clientProp &&
-    clientProp.type === "relation" &&
-    Array.isArray(clientProp.relation) &&
-    clientProp.relation.length > 0
-  ) {
-    clientRelationId = clientProp.relation[0].id;
+  for (const candidate of CLIENT_RELATION_NAMES) {
+    const prop = props[candidate];
+    if (
+      prop &&
+      prop.type === "relation" &&
+      Array.isArray(prop.relation) &&
+      prop.relation.length > 0
+    ) {
+      clientRelationId = prop.relation[0].id;
+      break;
+    }
   }
 
   return {
