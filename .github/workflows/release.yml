@@ -1,9 +1,14 @@
 name: Release
 
-# Builds a DMG on macOS (Apple Silicon) and a NSIS installer + portable exe
-# on Windows whenever a version tag like v1.2.3 is pushed. Assets are
-# attached to the auto-created GitHub Release, which the in-app update
-# checker reads.
+# Builds a DMG on macOS (Apple Silicon) and a NSIS installer on Windows
+# whenever a version tag like v1.2.3 is pushed. Assets are attached to
+# the auto-created GitHub Release, which the in-app update checker reads.
+#
+# We deliberately publish only the two files people install with:
+#   - Notion Time Tracker-<ver>-arm64.dmg
+#   - Notion Time Tracker Setup <ver>.exe
+# No .zip, no portable .exe, no .blockmap files — they just add noise
+# to the release page.
 on:
   push:
     tags:
@@ -41,10 +46,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release/*.dmg
-            release/*-mac.zip
-            release/*.blockmap
+          files: release/*.dmg
           generate_release_notes: true
 
   build-win:
@@ -73,7 +75,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release/*.exe
-            release/*.blockmap
+          # Only the Setup installer — skip the portable variant to keep
+          # the release page free of files non-devs might grab by mistake.
+          files: release/*Setup*.exe
           generate_release_notes: true
