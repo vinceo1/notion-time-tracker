@@ -14,6 +14,27 @@ export interface NotionUser {
 }
 
 /**
+ * Notion's status option palette. Values mirror what the Notion API
+ * returns in `property.status.options[].color`.
+ */
+export type NotionColor =
+  | "default"
+  | "gray"
+  | "brown"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "purple"
+  | "pink"
+  | "red";
+
+export interface StatusOption {
+  name: string;
+  color: NotionColor;
+}
+
+/**
  * A single Tasks DB ↔ Work Sessions DB pairing (one per teamspace).
  * `workSessionDbId` is the database the app will write `Session: ...` pages to.
  * `tasksDbId` is the Tasks database we read open tasks from.
@@ -25,8 +46,11 @@ export interface DbPairing {
   workSessionDbId: string;
   /** Relation-property name on Work Sessions that points back to Tasks */
   taskRelationName: string;
-  /** All Status option names in this teamspace's Tasks DB, in Notion's order. */
-  statusOptions: string[];
+  /**
+   * Status options on this teamspace's Tasks DB, in Notion's order,
+   * each paired with its Notion color so the UI can match the native dot.
+   */
+  statusOptions: StatusOption[];
   /**
    * Name of the person-type property used as "assignee" in this Tasks DB.
    * Different teamspaces use different names ("Assignee", "Participants",
@@ -80,6 +104,8 @@ export interface TaskItem {
   /** Whether the due date has a time component (affects sorting) */
   dueHasTime: boolean;
   status: string | null;
+  /** Notion color of the current status, used to tint the chip. */
+  statusColor: NotionColor | null;
   priority: "Urgent" | "High" | "Normal" | "Low" | null;
   type: TaskType | null;
   teamspace: string;
@@ -90,8 +116,34 @@ export interface TaskItem {
   timeEstimateMin: number | null;
   /** Minutes, from the "Time Tracked" formula property. */
   timeTrackedMin: number | null;
-  /** The Status option names available in this task's Tasks DB. */
-  statusOptions: string[];
+  /** Resolved title of the Client relation, when present (Client teamspace only). */
+  clientName: string | null;
+  /** The Status options available in this task's Tasks DB. */
+  statusOptions: StatusOption[];
+}
+
+/**
+ * Local LRU entry for the "recent tasks" dropdown. Persisted to userData.
+ * Only stores the minimum we need to start a timer on the task again
+ * without having to query Notion — the surrounding pairing provides the
+ * Status options at render time.
+ */
+export interface RecentTask {
+  taskId: string;
+  title: string;
+  teamspace: string;
+  workSessionDbId: string;
+  tasksDbId: string;
+  taskRelationName: string;
+  clientName: string | null;
+  lastTrackedAt: string;
+}
+
+export interface TodayStats {
+  /** ISO date (YYYY-MM-DD) the total belongs to. */
+  date: string;
+  /** Seconds of finished session time recorded today. */
+  totalSeconds: number;
 }
 
 export interface WriteSessionInput {

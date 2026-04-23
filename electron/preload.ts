@@ -3,7 +3,9 @@ import type {
   AppConfig,
   DiscoverResult,
   NotionUser,
+  RecentTask,
   TasksResult,
+  TodayStats,
   WriteSessionInput,
   WriteSessionResult,
 } from "./lib/types.js";
@@ -40,6 +42,20 @@ const api = {
       const listener = (_: unknown, size: number) => cb(size);
       ipcRenderer.on("queue:updated", listener);
       return () => ipcRenderer.removeListener("queue:updated", listener);
+    },
+  },
+  stats: {
+    today: (): Promise<TodayStats> => ipcRenderer.invoke("stats:today"),
+    recent: (): Promise<RecentTask[]> => ipcRenderer.invoke("stats:recent"),
+    onTodayUpdated: (cb: (t: TodayStats) => void): (() => void) => {
+      const listener = (_: unknown, t: TodayStats) => cb(t);
+      ipcRenderer.on("stats:today", listener);
+      return () => ipcRenderer.removeListener("stats:today", listener);
+    },
+    onRecentUpdated: (cb: (r: RecentTask[]) => void): (() => void) => {
+      const listener = (_: unknown, r: RecentTask[]) => cb(r);
+      ipcRenderer.on("stats:recent", listener);
+      return () => ipcRenderer.removeListener("stats:recent", listener);
     },
   },
   app: {

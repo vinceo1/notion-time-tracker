@@ -5,7 +5,10 @@ import { api } from "../api";
 
 interface Props {
   activeTask: TaskItem | null;
-  elapsedSeconds: number;
+  /** Seconds elapsed in the currently-running session (0 when idle). */
+  currentSessionSeconds: number;
+  /** Seconds already logged today *before* the current session started. */
+  todayBaselineSeconds: number;
   queuedCount: number;
 }
 
@@ -14,10 +17,12 @@ const MAC_TRAFFIC_LIGHT_PX = 78;
 
 export function ActiveTimerBar({
   activeTask,
-  elapsedSeconds,
+  currentSessionSeconds,
+  todayBaselineSeconds,
   queuedCount,
 }: Props): JSX.Element {
   const isMac = api.platform === "darwin";
+  const todayTotal = todayBaselineSeconds + currentSessionSeconds;
   return (
     <div className="drag-region sticky top-0 z-20 border-b border-bg-border bg-bg/80 backdrop-blur supports-[backdrop-filter]:bg-bg/60">
       <div
@@ -35,19 +40,27 @@ export function ActiveTimerBar({
               </div>
             </div>
           ) : (
-            <div className="truncate text-xs text-white/40 sm:text-sm">
-              No active timer
+            <div className="flex flex-col gap-0.5">
+              <div className="truncate text-[10px] uppercase tracking-wider text-white/40 sm:text-[11px]">
+                Today
+              </div>
+              <div className="truncate text-xs text-white/40 sm:text-sm">
+                No active timer
+              </div>
             </div>
           )}
         </div>
 
         <div
           className={clsx(
-            "shrink-0 font-mono text-lg font-semibold tabular-nums tracking-tight sm:text-xl md:text-2xl",
-            activeTask ? "text-white" : "text-white/30",
+            "shrink-0 text-right font-mono text-lg font-semibold tabular-nums tracking-tight sm:text-xl md:text-2xl",
+            todayTotal > 0 ? "text-white" : "text-white/30",
           )}
+          title={`Today's total tracked time${
+            activeTask ? " (including current session)" : ""
+          }`}
         >
-          {formatHMS(elapsedSeconds)}
+          {formatHMS(todayTotal)}
         </div>
 
         {queuedCount > 0 ? (

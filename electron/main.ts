@@ -4,6 +4,7 @@ import path from "node:path";
 import { NotionClient } from "./lib/notion.js";
 import { ConfigStore } from "./lib/storage.js";
 import { OfflineQueue } from "./lib/queue.js";
+import { StatsStore } from "./lib/stats.js";
 import {
   checkForUpdate,
   downloadAssetToDownloads,
@@ -15,8 +16,11 @@ import type {
   DbPairing,
   DiscoverResult,
   NotionUser,
+  RecentTask,
+  StatusOption,
   TaskItem,
   TasksResult,
+  TodayStats,
   WriteSessionInput,
 } from "./lib/types.js";
 
@@ -33,6 +37,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 let win: BrowserWindow | null = null;
 let configStore: ConfigStore;
 let queue: OfflineQueue;
+let stats: StatsStore;
 let notion: NotionClient | null = null;
 
 // Main-process caches used to validate writes against the last trusted state
@@ -111,6 +116,9 @@ app.whenReady().then(async () => {
   queue = new OfflineQueue(app.getPath("userData"));
   await queue.load();
 
+  stats = new StatsStore(app.getPath("userData"));
+  await stats.load();
+
   registerIpc();
   createWindow();
 
@@ -177,23 +185,32 @@ function registerIpc(): void {
 
     // Silent migration: pairings saved before we started detecting the
     // full per-DB schema (assignee property name, completed-status group,
-    // etc.) can be missing those fields. Backfill them on the fly so the
-    // user doesn't have to click Discover again after upgrading.
-    const needsMigration = cfg.pairings.some(
-      (p) =>
-        !p.statusOptions ||
-        p.statusOptions.length === 0 ||
+    // status colors, etc.) can be missing those fields OR have the old
+    // string-only statusOptions format. Refetch + backfill so the user
+    // doesn't need to click Discover again after an upgrade.
+    const needsMigration = cfg.pairings.some((p) => {
+      const statusOk =
+        Array.isArray(p.statusOptions) &&
+        p.statusOptions.length > 0 &&
+        // Old string[] format → migrate.
+        typeof p.statusOptions[0] === "object";
+      return (
+        !statusOk ||
         p.assigneePropertyName === undefined ||
         p.statusPropertyName === undefined ||
-        !Array.isArray(p.completedStatusNames),
-    );
+        !Array.isArray(p.completedStatusNames)
+      );
+    });
     if (needsMigration) {
       const warnings: string[] = [];
       const refreshed = await Promise.all(
         cfg.pairings.map(async (p) => {
-          const hasAll =
-            p.statusOptions &&
+          const statusOk =
+            Array.isArray(p.statusOptions) &&
             p.statusOptions.length > 0 &&
+            typeof p.statusOptions[0] === "object";
+          const hasAll =
+            statusOk &&
             p.assigneePropertyName !== undefined &&
             p.statusPropertyName !== undefined &&
             Array.isArray(p.completedStatusNames);
@@ -202,10 +219,9 @@ function registerIpc(): void {
             const meta = await client.fetchTasksDbMeta(p.tasksDbId, warnings);
             return {
               ...p,
-              statusOptions:
-                p.statusOptions && p.statusOptions.length > 0
-                  ? p.statusOptions
-                  : meta.statusOptions,
+              // Always take Notion's StatusOption[] during migration — the
+              // old string[] format lacks colors we now need.
+              statusOptions: meta.statusOptions,
               assigneePropertyName:
                 p.assigneePropertyName ?? meta.assigneePropertyName,
               statusPropertyName:
@@ -269,6 +285,34 @@ function registerIpc(): void {
         taskRelationName: pairing.taskRelationName,
       };
 
+      const durationSec = Math.max(
+        0,
+        Math.floor(
+          (new Date(trustedInput.endIso).getTime() -
+            new Date(trustedInput.startIso).getTime()) /
+            1000,
+        ),
+      );
+
+      // Regardless of whether the Notion write ends up queued, from the
+      // user's perspective they just tracked time, so reflect it in
+      // today's total and bump the recent-tasks LRU.
+      const newToday = await stats.addSessionSeconds(durationSec);
+      win?.webContents.send("stats:today", newToday);
+
+      const knownTask = lastTasks.get(trustedInput.taskId);
+      const recentClientName = knownTask?.clientName ?? null;
+      const newRecent = await stats.touchRecent({
+        taskId: trustedInput.taskId,
+        title: trustedInput.taskTitle,
+        teamspace: pairing.label,
+        workSessionDbId: pairing.workSessionDbId,
+        tasksDbId: pairing.tasksDbId,
+        taskRelationName: pairing.taskRelationName,
+        clientName: recentClientName,
+      });
+      win?.webContents.send("stats:recent", newRecent);
+
       try {
         const client = ensureNotion();
         await client.createWorkSession(trustedInput);
@@ -301,7 +345,7 @@ function registerIpc(): void {
       }
       if (
         known.statusOptions.length > 0 &&
-        !known.statusOptions.includes(payload.status)
+        !known.statusOptions.some((o) => o.name === payload.status)
       ) {
         return {
           ok: false,
@@ -318,6 +362,9 @@ function registerIpc(): void {
       }
     },
   );
+
+  ipcMain.handle("stats:today", (): TodayStats => stats.getToday());
+  ipcMain.handle("stats:recent", (): RecentTask[] => stats.getRecent());
 
   ipcMain.handle("queue:size", () => queue.size());
   ipcMain.handle("queue:flush", async () => {

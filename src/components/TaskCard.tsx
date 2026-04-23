@@ -1,9 +1,10 @@
 import clsx from "clsx";
 import { format, isToday, parseISO } from "date-fns";
 import { useState } from "react";
-import type { TaskItem } from "../api";
+import type { NotionColor, StatusOption, TaskItem } from "../api";
 import { api } from "../api";
 import { formatHMS } from "../lib/formatDuration";
+import { NOTION_DOT_CLASSES, NOTION_PILL_CLASSES } from "../lib/notionColors";
 
 const PRIORITY_COLORS: Record<string, string> = {
   Urgent: "text-red-300 bg-red-500/10 border-red-500/30",
@@ -38,17 +39,24 @@ export function TaskCard({
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [currentStatus, setCurrentStatus] = useState(task.status);
+  const [currentStatusColor, setCurrentStatusColor] = useState<NotionColor | null>(
+    task.statusColor,
+  );
 
   async function handleStatusChange(next: string) {
     if (!next || next === currentStatus) return;
     const previous = currentStatus;
+    const previousColor = currentStatusColor;
+    const match = task.statusOptions.find((o) => o.name === next);
     setCurrentStatus(next); // optimistic
+    setCurrentStatusColor(match?.color ?? null);
     setStatusBusy(true);
     setStatusError(null);
     const res = await api.notion.updateTaskStatus(task.id, next);
     setStatusBusy(false);
     if (!res.ok) {
       setCurrentStatus(previous); // rollback
+      setCurrentStatusColor(previousColor);
       setStatusError(res.error);
       return;
     }
@@ -59,6 +67,11 @@ export function TaskCard({
     if (isActive) onStop();
     else onStart(task);
   }
+
+  // "Growth · DermaWlosy" when both are present; otherwise whichever we have.
+  const contextLabel = [task.clientName, task.teamspace]
+    .filter((x) => !!x)
+    .join(" · ");
 
   return (
     <div
@@ -108,19 +121,15 @@ export function TaskCard({
         </div>
 
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-white/50">
-          <span className="pill border border-bg-border bg-bg-elev text-white/60">
-            {task.teamspace}
-          </span>
-
           <StatusDropdown
             value={currentStatus}
+            valueColor={currentStatusColor}
             options={task.statusOptions}
             disabled={statusBusy}
             onChange={handleStatusChange}
           />
 
           {dueLabel ? <span>· {dueLabel}</span> : null}
-          {task.type ? <span>· {task.type}</span> : null}
 
           {isActive && elapsedSeconds !== null ? (
             <span className="flex items-center gap-1 font-mono tabular-nums text-red-200">
@@ -152,6 +161,10 @@ export function TaskCard({
             </span>
           ) : null}
 
+          {contextLabel ? (
+            <span className="text-white/40">· {contextLabel}</span>
+          ) : null}
+
           {statusError ? (
             <span className="text-red-300" title={statusError}>
               · status save failed
@@ -174,13 +187,15 @@ export function TaskCard({
 
 interface StatusDropdownProps {
   value: string | null;
-  options: string[];
+  valueColor: NotionColor | null;
+  options: StatusOption[];
   disabled: boolean;
   onChange: (next: string) => void;
 }
 
 function StatusDropdown({
   value,
+  valueColor,
   options,
   disabled,
   onChange,
@@ -188,11 +203,16 @@ function StatusDropdown({
   if (options.length === 0) {
     return value ? <span>· {value}</span> : <span />;
   }
+  const pillClass = valueColor
+    ? NOTION_PILL_CLASSES[valueColor]
+    : NOTION_PILL_CLASSES.default;
   return (
     <label className="relative inline-flex">
       <select
         className={clsx(
-          "appearance-none rounded-full border border-bg-border bg-bg-elev px-2.5 py-0.5 pr-5 text-[10px] font-semibold uppercase tracking-wide text-white/70 transition hover:border-white/30 hover:text-white focus:border-white/40 focus:outline-none",
+          "appearance-none rounded-full border px-2.5 py-0.5 pr-5 text-[10px] font-semibold uppercase tracking-wide outline-none transition",
+          pillClass,
+          "hover:brightness-110 focus:ring-1 focus:ring-white/30",
           disabled && "opacity-60",
         )}
         value={value ?? ""}
@@ -200,12 +220,12 @@ function StatusDropdown({
         onChange={(e) => onChange(e.target.value)}
         title="Change status"
       >
-        {value && !options.includes(value) ? (
+        {value && !options.some((o) => o.name === value) ? (
           <option value={value}>{value}</option>
         ) : null}
         {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
+          <option key={o.name} value={o.name}>
+            {o.name}
           </option>
         ))}
       </select>
@@ -235,13 +255,7 @@ function formatMinutes(minutes: number | null): string {
 
 function PlayIcon(): JSX.Element {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
       <path d="M8 5v14l11-7L8 5z" />
     </svg>
   );
@@ -249,13 +263,7 @@ function PlayIcon(): JSX.Element {
 
 function StopSquare(): JSX.Element {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      fill="currentColor"
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
   );
@@ -292,7 +300,7 @@ function ChevronIcon(): JSX.Element {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-white/50"
+      className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-70"
       aria-hidden="true"
     >
       <polyline points="6 9 12 15 18 9" />
@@ -318,3 +326,8 @@ function ClockIcon(): JSX.Element {
     </svg>
   );
 }
+
+// NOTION_DOT_CLASSES is exposed in case a future dropdown variant renders
+// dots next to option names; kept in the import list so linting surfaces
+// if the dot classes themselves fall out of sync with the color union.
+void NOTION_DOT_CLASSES;

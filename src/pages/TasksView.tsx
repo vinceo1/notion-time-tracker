@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
   type AppConfig,
+  type RecentTask,
   type TaskItem,
   type TaskQueryError,
 } from "../api";
 import { ActiveTimerBar } from "../components/ActiveTimerBar";
+import { RecentsDropdown } from "../components/RecentsDropdown";
 import { TaskGroup } from "../components/TaskGroup";
 import { groupTasksByDueDate } from "../lib/groupTasksByDueDate";
 import { useTimer } from "../hooks/useTimer";
@@ -29,6 +31,8 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
   const [isWriting, setIsWriting] = useState<boolean>(false);
   const [queuedCount, setQueuedCount] = useState<number>(0);
   const [refreshKey, setRefreshKey] = useState<number>(0);
+  const [todayBaseline, setTodayBaseline] = useState<number>(0);
+  const [recents, setRecents] = useState<RecentTask[]>([]);
 
   const elapsed = useTimer(timer?.startedAt ?? null, timer !== null);
 
@@ -63,6 +67,27 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
   useEffect(() => {
     api.queue.size().then(setQueuedCount).catch(() => {});
     return api.queue.onUpdated(setQueuedCount);
+  }, []);
+
+  // Prime today's total + recent-tasks list, and subscribe to changes
+  // pushed from the main process whenever a session finishes.
+  useEffect(() => {
+    api.stats
+      .today()
+      .then((t) => setTodayBaseline(t.totalSeconds))
+      .catch(() => {});
+    api.stats
+      .recent()
+      .then(setRecents)
+      .catch(() => {});
+    const offToday = api.stats.onTodayUpdated((t) =>
+      setTodayBaseline(t.totalSeconds),
+    );
+    const offRecent = api.stats.onRecentUpdated(setRecents);
+    return () => {
+      offToday();
+      offRecent();
+    };
   }, []);
 
   const handleStart = useCallback((task: TaskItem) => {
@@ -122,11 +147,52 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
     [],
   );
 
+  const handleRecentPick = useCallback(
+    (r: RecentTask) => {
+      if (timer) return; // one active timer at a time
+      // If the task is still in the loaded list, prefer that copy so the
+      // TaskCard re-renders with REC highlight + live timer.
+      const fromList = tasks.find((t) => t.id === r.taskId);
+      if (fromList) {
+        setTimer({ task: fromList, startedAt: Date.now() });
+        return;
+      }
+      // Otherwise build a synthetic TaskItem from the recent entry and
+      // the pairing's cached status options. Enough data to start + stop;
+      // the next Refresh fills in the real details.
+      const pairing = config.pairings.find(
+        (p) => p.workSessionDbId === r.workSessionDbId,
+      );
+      const synthetic: TaskItem = {
+        id: r.taskId,
+        title: r.title,
+        url: "",
+        dueDate: null,
+        dueHasTime: false,
+        status: null,
+        statusColor: null,
+        priority: null,
+        type: null,
+        teamspace: r.teamspace,
+        workSessionDbId: r.workSessionDbId,
+        taskRelationName: r.taskRelationName,
+        tasksDbId: r.tasksDbId,
+        timeEstimateMin: null,
+        timeTrackedMin: null,
+        clientName: r.clientName,
+        statusOptions: pairing?.statusOptions ?? [],
+      };
+      setTimer({ task: synthetic, startedAt: Date.now() });
+    },
+    [timer, tasks, config.pairings],
+  );
+
   return (
     <div className="flex h-full flex-col bg-bg text-white">
       <ActiveTimerBar
         activeTask={timer?.task ?? null}
-        elapsedSeconds={elapsed}
+        currentSessionSeconds={elapsed}
+        todayBaselineSeconds={todayBaseline}
         queuedCount={queuedCount}
       />
 
@@ -135,6 +201,11 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
           Your tasks
         </div>
         <div className="flex items-center gap-2">
+          <RecentsDropdown
+            recents={recents}
+            anyTimerActive={timer !== null}
+            onPick={handleRecentPick}
+          />
           <button
             type="button"
             className="btn-ghost"

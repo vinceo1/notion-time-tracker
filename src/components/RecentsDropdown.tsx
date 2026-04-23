@@ -1,0 +1,161 @@
+import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
+import type { RecentTask } from "../api";
+
+interface Props {
+  recents: RecentTask[];
+  anyTimerActive: boolean;
+  onPick: (r: RecentTask) => void;
+}
+
+/**
+ * Small dropdown button in the page header. Lists the last tasks the
+ * user tracked (LRU, stored locally) so floating work like "Email" or
+ * "Other tasks" — which never get a due date and therefore don't show
+ * up in the main task list — can still be time-tracked with one click.
+ */
+export function RecentsDropdown({
+  recents,
+  anyTimerActive,
+  onPick,
+}: Props): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        className="btn-ghost"
+        onClick={() => setOpen((v) => !v)}
+        title="Recent tasks"
+      >
+        <HistoryIcon />
+        <span className="text-xs">Recent</span>
+        <ChevronIcon />
+      </button>
+
+      {open ? (
+        <div
+          role="listbox"
+          className="absolute right-0 z-30 mt-2 w-72 overflow-hidden rounded-md border border-bg-border bg-bg-surface shadow-xl"
+        >
+          {recents.length === 0 ? (
+            <div className="px-3 py-6 text-center text-xs text-white/40">
+              No recent tasks yet. Stop a timer and it'll show up here.
+            </div>
+          ) : (
+            <ul className="max-h-80 overflow-y-auto py-1">
+              {recents.map((r) => {
+                const context = [r.clientName, r.teamspace]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <li key={r.taskId}>
+                    <button
+                      type="button"
+                      className={clsx(
+                        "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left transition hover:bg-white/5",
+                        anyTimerActive && "opacity-60",
+                      )}
+                      disabled={anyTimerActive}
+                      onClick={() => {
+                        onPick(r);
+                        setOpen(false);
+                      }}
+                      title={
+                        anyTimerActive
+                          ? "Stop the current timer first"
+                          : `Start timer on ${r.title}`
+                      }
+                    >
+                      <div className="w-full truncate text-sm text-white/90">
+                        {r.title}
+                      </div>
+                      <div className="flex w-full items-center gap-2 text-[10px] text-white/40">
+                        {context ? <span className="truncate">{context}</span> : null}
+                        <span className="ml-auto shrink-0">
+                          {formatRelative(r.lastTrackedAt)}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatRelative(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "";
+  const diffMs = Date.now() - then;
+  const mins = Math.round(diffMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(then).toLocaleDateString();
+}
+
+function HistoryIcon(): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1 4v6h6" />
+      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+      <polyline points="12 7 12 12 15 14" />
+    </svg>
+  );
+}
+
+function ChevronIcon(): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="10"
+      height="10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}

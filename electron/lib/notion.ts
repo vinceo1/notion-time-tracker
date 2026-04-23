@@ -11,7 +11,9 @@ import type {
 import type {
   DbPairing,
   DiscoverResult,
+  NotionColor,
   NotionUser,
+  StatusOption,
   TaskItem,
   TaskQueryError,
   TaskType,
@@ -191,7 +193,12 @@ export class NotionClient {
       pairings.map(
         async (
           pairing,
-        ): Promise<{ tasks: TaskItem[]; error: TaskQueryError | null }> => {
+        ): Promise<{
+          tasks: TaskItem[];
+          /** Parallel to `tasks`: the Client relation id for each task, or null. */
+          clientIds: (string | null)[];
+          error: TaskQueryError | null;
+        }> => {
           try {
             // Type filter is applied client-side because the property name
             // differs across teamspaces ("Type" vs "Task Type"). Assignee
@@ -224,8 +231,12 @@ export class NotionClient {
               cursor = res.has_more ? res.next_cursor ?? undefined : undefined;
             } while (cursor);
 
+            const mapped = results.map((page) =>
+              mapPageToTaskItem(page, pairing),
+            );
             return {
-              tasks: results.map((page) => mapPageToTaskItem(page, pairing)),
+              tasks: mapped.map((m) => m.item),
+              clientIds: mapped.map((m) => m.clientRelationId),
               error: null,
             };
           } catch (err) {
@@ -237,7 +248,8 @@ export class NotionClient {
               err,
             );
             return {
-              tasks: [],
+              tasks: [] as TaskItem[],
+              clientIds: [] as (string | null)[],
               error: {
                 teamspace: pairing.label,
                 tasksDbId: pairing.tasksDbId,
@@ -254,12 +266,36 @@ export class NotionClient {
       .map((p) => p.error)
       .filter((e): e is TaskQueryError => e !== null);
 
+    // Resolve every Client-relation id across all teamspaces in one batch.
+    // Unique-deduped inside resolvePageTitles so we only hit Notion once
+    // per distinct client, not once per task.
+    const allClientIds = perPairing.flatMap((p) =>
+      p.clientIds.filter((id): id is string => !!id),
+    );
+    const clientNameById =
+      allClientIds.length > 0
+        ? await this.resolvePageTitles(allClientIds)
+        : new Map<string, string | null>();
+
+    // Re-walk per pairing so task[i] and clientIds[i] line up correctly.
+    const tasksWithClient: TaskItem[] = [];
+    for (const { tasks, clientIds } of perPairing) {
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
+        const clientId = clientIds[i];
+        tasksWithClient.push({
+          ...task,
+          clientName: clientId ? clientNameById.get(clientId) ?? null : null,
+        });
+      }
+    }
+
     const filtered =
       typeFilter.length === 0
-        ? allTasks
+        ? tasksWithClient
         : (() => {
             const allowed = new Set<string>(typeFilter);
-            return allTasks.filter(
+            return tasksWithClient.filter(
               (t) => t.type !== null && allowed.has(t.type),
             );
           })();
@@ -277,7 +313,7 @@ export class NotionClient {
     tasksDbId: string,
     warnings: string[],
   ): Promise<{
-    statusOptions: string[];
+    statusOptions: StatusOption[];
     completedStatusNames: string[];
     statusPropertyName: string | null;
     assigneePropertyName: string | null;
@@ -288,16 +324,20 @@ export class NotionClient {
       })) as DatabaseObjectResponse;
       const props = db.properties ?? {};
 
-      // Status: find by type. Grab options + whatever Notion considers
-      // the "complete" group so we can exclude finished tasks regardless
-      // of what they're named in this DB.
-      let statusOptions: string[] = [];
+      // Status: find by type. Grab options (with their colors so the UI
+      // can match Notion's native dot) + whatever Notion considers the
+      // "complete" group so we can exclude finished tasks regardless of
+      // what they're named in this DB.
+      let statusOptions: StatusOption[] = [];
       let completedStatusNames: string[] = [];
       let statusPropertyName: string | null = null;
       for (const [name, prop] of Object.entries(props)) {
         if (prop.type === "status") {
           statusPropertyName = name;
-          statusOptions = prop.status.options.map((o) => o.name);
+          statusOptions = prop.status.options.map((o) => ({
+            name: o.name,
+            color: normalizeColor(o.color),
+          }));
           const groups = (
             prop.status as unknown as {
               groups?: Array<{ name?: string; option_ids?: string[] }>;
@@ -369,8 +409,39 @@ export class NotionClient {
   async fetchStatusOptions(
     tasksDbId: string,
     warnings: string[],
-  ): Promise<string[]> {
+  ): Promise<StatusOption[]> {
     return (await this.fetchTasksDbMeta(tasksDbId, warnings)).statusOptions;
+  }
+
+  /**
+   * Resolve a list of Notion page IDs to their title text. Used to turn
+   * a Client relation (just an ID) into the client's actual name.
+   * Fetches pages in parallel; missing/inaccessible IDs map to null.
+   */
+  async resolvePageTitles(pageIds: string[]): Promise<Map<string, string | null>> {
+    const unique = Array.from(new Set(pageIds.filter(Boolean)));
+    const entries = await Promise.all(
+      unique.map(async (id): Promise<[string, string | null]> => {
+        try {
+          const page = await this.client.pages.retrieve({ page_id: id });
+          if ("properties" in page) {
+            for (const prop of Object.values(page.properties)) {
+              if (prop.type === "title") {
+                const title = prop.title
+                  .map((t) => t.plain_text)
+                  .join("")
+                  .trim();
+                return [id, title || null];
+              }
+            }
+          }
+          return [id, null];
+        } catch {
+          return [id, null];
+        }
+      }),
+    );
+    return new Map(entries);
   }
 
   async updateTaskStatus(taskId: string, statusName: string): Promise<void> {
@@ -456,10 +527,34 @@ function buildTaskFilter(
 const TYPE_PROPERTY_NAMES = ["Type", "Task Type"];
 const DUE_PROPERTY_NAMES = ["Due", "Due Date", "Deadline"];
 
+const NOTION_COLORS: NotionColor[] = [
+  "default",
+  "gray",
+  "brown",
+  "orange",
+  "yellow",
+  "green",
+  "blue",
+  "purple",
+  "pink",
+  "red",
+];
+
+/**
+ * Notion returns colors as strings; normalize anything unexpected to
+ * "default" so downstream UI code can rely on the narrow union.
+ */
+function normalizeColor(raw: string | undefined | null): NotionColor {
+  if (!raw) return "default";
+  const lower = raw.toLowerCase();
+  const hit = NOTION_COLORS.find((c) => c === lower);
+  return hit ?? "default";
+}
+
 function mapPageToTaskItem(
   page: PageObjectResponse,
   pairing: DbPairing,
-): TaskItem {
+): { item: TaskItem; clientRelationId: string | null } {
   const props = page.properties;
 
   // Title — find by TYPE, not by name (the column is renamed in some DBs).
@@ -487,19 +582,29 @@ function mapPageToTaskItem(
 
   // Status — use the property name discovered for this pairing, falling
   // back to generic "find any status-type property" for backwards compat
-  // with pairings saved before we started detecting the name.
+  // with pairings saved before we started detecting the name. Capture the
+  // color too so the UI can tint the chip to match Notion.
   let status: string | null = null;
+  let statusColor: NotionColor | null = null;
   const statusKey = pairing.statusPropertyName ?? "Status";
   const statusProp = props[statusKey];
   if (statusProp && statusProp.type === "status" && statusProp.status) {
     status = statusProp.status.name;
+    statusColor = normalizeColor(statusProp.status.color);
   } else if (!pairing.statusPropertyName) {
     for (const prop of Object.values(props)) {
       if (prop.type === "status" && prop.status) {
         status = prop.status.name;
+        statusColor = normalizeColor(prop.status.color);
         break;
       }
     }
+  }
+  // Fall back to looking up the color on the pairing's cached option list
+  // if the page response didn't include it for some reason.
+  if (status && !statusColor) {
+    const match = pairing.statusOptions.find((o) => o.name === status);
+    if (match) statusColor = match.color;
   }
 
   // Priority
@@ -543,25 +648,41 @@ function mapPageToTaskItem(
     }
   }
 
+  // Client relation ID (Client teamspace has a "Client" relation pointing
+  // to the Clients DB). We capture the first related page id here; the
+  // outer queryTasks() resolves the ID to a display name in bulk.
+  let clientRelationId: string | null = null;
+  const clientProp = props["Client"];
+  if (
+    clientProp &&
+    clientProp.type === "relation" &&
+    Array.isArray(clientProp.relation) &&
+    clientProp.relation.length > 0
+  ) {
+    clientRelationId = clientProp.relation[0].id;
+  }
+
   return {
-    id: page.id,
-    title,
-    url: page.url,
-    dueDate,
-    dueHasTime,
-    status,
-    priority,
-    type,
-    teamspace: pairing.label,
-    workSessionDbId: pairing.workSessionDbId,
-    taskRelationName: pairing.taskRelationName,
-    tasksDbId: pairing.tasksDbId,
-    timeEstimateMin,
-    timeTrackedMin,
-    // Old pairings saved before this field existed won't have statusOptions —
-    // fall back to an empty list so the dropdown degrades to a read-only label
-    // until the user clicks Discover again.
-    statusOptions: pairing.statusOptions ?? [],
+    item: {
+      id: page.id,
+      title,
+      url: page.url,
+      dueDate,
+      dueHasTime,
+      status,
+      statusColor,
+      priority,
+      type,
+      teamspace: pairing.label,
+      workSessionDbId: pairing.workSessionDbId,
+      taskRelationName: pairing.taskRelationName,
+      tasksDbId: pairing.tasksDbId,
+      timeEstimateMin,
+      timeTrackedMin,
+      clientName: null, // filled in later by resolvePageTitles
+      statusOptions: pairing.statusOptions ?? [],
+    },
+    clientRelationId,
   };
 }
 
