@@ -301,6 +301,7 @@ function UpdatesSection(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadedPath, setDownloadedPath] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<{
     bytesDownloaded: number;
     totalBytes: number | null;
@@ -340,6 +341,7 @@ function UpdatesSection(): JSX.Element {
       const r = await api.updater.download(result.downloadUrl);
       if (r.ok) {
         setDownloadedPath(r.filepath);
+        if (r.installing) setInstalling(true);
       } else {
         setError(r.error);
       }
@@ -392,10 +394,16 @@ function UpdatesSection(): JSX.Element {
               </div>
             </div>
             {result.downloadUrl ? (
-              downloadedPath ? (
+              installing ? (
+                <div className="text-xs text-emerald-300">
+                  Installing v{result.latestVersion}… the app will quit and
+                  relaunch on the new version in a moment.
+                </div>
+              ) : downloadedPath ? (
                 <div className="text-xs text-emerald-300">
                   Saved to <span className="font-mono">{downloadedPath}</span>.
-                  The installer opened — drag the app into Applications to finish the update.
+                  The installer opened — drag the app into Applications to
+                  finish the update.
                 </div>
               ) : downloading ? (
                 <DownloadProgressBar progress={progress} />

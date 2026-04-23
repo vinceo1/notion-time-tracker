@@ -67,8 +67,10 @@ const api = {
     check: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("updater:check"),
     download: (
       url: string,
-    ): Promise<{ ok: true; filepath: string } | { ok: false; error: string }> =>
-      ipcRenderer.invoke("updater:download", url),
+    ): Promise<
+      | { ok: true; filepath: string; installing: boolean }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke("updater:download", url),
     onProgress: (cb: (p: DownloadProgress) => void): (() => void) => {
       const listener = (_: unknown, p: DownloadProgress) => cb(p);
       ipcRenderer.on("updater:progress", listener);

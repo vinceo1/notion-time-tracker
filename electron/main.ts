@@ -1,12 +1,9 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-
-const pexecFile = promisify(execFile);
 import { NotionClient } from "./lib/notion.js";
 import { ConfigStore } from "./lib/storage.js";
+import { installDmgViaDitto } from "./lib/macInstaller.js";
 import { OfflineQueue } from "./lib/queue.js";
 import { StatsStore } from "./lib/stats.js";
 import {
@@ -443,7 +440,10 @@ function registerIpc(): void {
     async (
       _evt,
       url: string,
-    ): Promise<{ ok: true; filepath: string } | { ok: false; error: string }> => {
+    ): Promise<
+      | { ok: true; filepath: string; installing: boolean }
+      | { ok: false; error: string }
+    > => {
       // Two layers of protection:
       //   1. The URL must exactly match the one we received from the last
       //      successful updater:check — prevents the renderer from asking
@@ -481,36 +481,41 @@ function registerIpc(): void {
           },
         });
 
-        // On macOS, strip ONLY the com.apple.quarantine attribute from
-        // the downloaded DMG. Gatekeeper uses that attribute to decide
-        // whether to block first launch ("damaged and can't be opened")
-        // for unsigned apps.
+        // On macOS, try to install the DMG programmatically (mount
+        // via hdiutil, ditto into a staging folder, swap into
+        // /Applications from a detached helper after we quit). This
+        // bypasses Finder's drag-to-Applications path which trips on
+        // -36 ("data could not be read or written") when trying to
+        // overwrite the currently-running .app bundle.
         //
-        // Earlier versions used `xattr -c` (clear *all* xattrs) for this,
-        // but that also wiped Finder-copy metadata the DMG container
-        // needs, and triggered error -36 ("data could not be read or
-        // written") when the user drags the .app to /Applications. The
-        // targeted delete below is safe: if the attribute isn't present,
-        // `xattr -d` errors with "No such xattr" and we ignore it.
+        // If the programmatic install fails for any reason (weird DMG
+        // layout, /Applications not writable, missing hdiutil, etc.)
+        // we fall back to opening the DMG in Finder so the user can
+        // drag the app manually — same behaviour as pre-0.4.8.
         if (process.platform === "darwin") {
-          try {
-            await pexecFile("xattr", [
-              "-d",
-              "com.apple.quarantine",
-              filepath,
-            ]);
-          } catch (e) {
-            // Attribute wasn't set → nothing to do. Any other failure is
-            // non-fatal: user can strip manually if Gatekeeper complains.
-            const msg = (e as Error).message ?? "";
-            if (!/No such xattr/i.test(msg)) {
-              console.warn("xattr -d quarantine failed:", e);
-            }
+          const outcome = await installDmgViaDitto(filepath);
+          if (outcome.ok) {
+            // Helper script is detached and ticking; quit ourselves in
+            // a moment so it can do the swap on unlocked files.
+            setTimeout(() => {
+              try {
+                app.quit();
+              } catch {
+                /* ignored */
+              }
+            }, 500);
+            return { ok: true, filepath, installing: true };
           }
+          console.warn(
+            "Programmatic DMG install failed, falling back to Finder:",
+            outcome.error,
+          );
         }
 
+        // Non-macOS or programmatic install failed: let Finder / the
+        // OS installer handle it the traditional way.
         shell.openPath(filepath).catch(() => {});
-        return { ok: true, filepath };
+        return { ok: true, filepath, installing: false };
       } catch (err) {
         return { ok: false, error: (err as Error).message ?? String(err) };
       }
