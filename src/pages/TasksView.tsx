@@ -194,6 +194,8 @@ export function TasksView({ config, onOpenSettings }: Props): JSX.Element {
         currentSessionSeconds={elapsed}
         todayBaselineSeconds={todayBaseline}
         queuedCount={queuedCount}
+        onStop={handleStop}
+        isWriting={isWriting}
       />
 
       <div className="flex items-center justify-between border-b border-bg-border bg-bg px-6 py-3">

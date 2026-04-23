@@ -1,7 +1,7 @@
 {
   "name": "notion-time-tracker",
   "private": true,
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Minimalist desktop time tracker that syncs with Notion Work Sessions.",
   "main": "dist-electron/main.js",
   "author": "vinceo1",
