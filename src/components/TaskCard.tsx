@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import { format, isToday, parseISO } from "date-fns";
 import { useState } from "react";
-import type { NotionColor, StatusOption, TaskItem } from "../api";
+import type { NotionColor, TaskItem } from "../api";
 import { api } from "../api";
 import { formatHMS } from "../lib/formatDuration";
-import { NOTION_DOT_CLASSES, NOTION_PILL_CLASSES } from "../lib/notionColors";
+import { StatusPopover } from "./StatusPopover";
 
 const PRIORITY_COLORS: Record<string, string> = {
   Urgent: "text-red-300 bg-red-500/10 border-red-500/30",
@@ -121,7 +121,7 @@ export function TaskCard({
         </div>
 
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-white/50">
-          <StatusDropdown
+          <StatusPopover
             value={currentStatus}
             valueColor={currentStatusColor}
             options={task.statusOptions}
@@ -185,55 +185,6 @@ export function TaskCard({
   );
 }
 
-interface StatusDropdownProps {
-  value: string | null;
-  valueColor: NotionColor | null;
-  options: StatusOption[];
-  disabled: boolean;
-  onChange: (next: string) => void;
-}
-
-function StatusDropdown({
-  value,
-  valueColor,
-  options,
-  disabled,
-  onChange,
-}: StatusDropdownProps): JSX.Element {
-  if (options.length === 0) {
-    return value ? <span>· {value}</span> : <span />;
-  }
-  const pillClass = valueColor
-    ? NOTION_PILL_CLASSES[valueColor]
-    : NOTION_PILL_CLASSES.default;
-  return (
-    <label className="relative inline-flex">
-      <select
-        className={clsx(
-          "appearance-none rounded-full border px-2.5 py-0.5 pr-5 text-[10px] font-semibold uppercase tracking-wide outline-none transition",
-          pillClass,
-          "hover:brightness-110 focus:ring-1 focus:ring-white/30",
-          disabled && "opacity-60",
-        )}
-        value={value ?? ""}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        title="Change status"
-      >
-        {value && !options.some((o) => o.name === value) ? (
-          <option value={value}>{value}</option>
-        ) : null}
-        {options.map((o) => (
-          <option key={o.name} value={o.name}>
-            {o.name}
-          </option>
-        ))}
-      </select>
-      <ChevronIcon />
-    </label>
-  );
-}
-
 function formatDueLabel(dueDate: string | null, hasTime: boolean): string | null {
   if (!dueDate) return null;
   const d = parseISO(dueDate);
@@ -289,25 +240,6 @@ function ExternalIcon(): JSX.Element {
   );
 }
 
-function ChevronIcon(): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="10"
-      height="10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-70"
-      aria-hidden="true"
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}
-
 function ClockIcon(): JSX.Element {
   return (
     <svg
@@ -327,7 +259,3 @@ function ClockIcon(): JSX.Element {
   );
 }
 
-// NOTION_DOT_CLASSES is exposed in case a future dropdown variant renders
-// dots next to option names; kept in the import list so linting surfaces
-// if the dot classes themselves fall out of sync with the color union.
-void NOTION_DOT_CLASSES;

@@ -453,6 +453,214 @@ export class NotionClient {
     });
   }
 
+  /**
+   * Sum the duration of every Work Session created today across all
+   * configured pairings for the given user. Computes duration locally
+   * from Start/End ISO strings so we don't depend on the DB's formula
+   * (which might return a string, number, or be misnamed).
+   *
+   * Returns seconds. Callers should fold this into local stats so
+   * today's total reflects sessions tracked from any device or from
+   * the Notion UI itself, not just sessions saved through this app.
+   */
+  async fetchTodaySessionsSeconds(
+    pairings: DbPairing[],
+    teamMemberId: string | null,
+  ): Promise<number> {
+    if (pairings.length === 0) return 0;
+    const startOfToday = startOfTodayIso();
+    const perPairing = await Promise.all(
+      pairings.map(async (pairing) => {
+        try {
+          const andClauses: unknown[] = [
+            {
+              property: "Start Time",
+              date: { on_or_after: startOfToday },
+            },
+          ];
+          if (teamMemberId) {
+            andClauses.push({
+              property: "Team Member",
+              people: { contains: teamMemberId },
+            });
+          }
+          const filter = { and: andClauses } as QueryDatabaseParameters["filter"];
+          let total = 0;
+          let cursor: string | undefined;
+          do {
+            const res = await this.client.databases.query({
+              database_id: pairing.workSessionDbId,
+              filter,
+              page_size: 100,
+              start_cursor: cursor,
+            });
+            for (const r of res.results) {
+              if (!("properties" in r)) continue;
+              const page = r as PageObjectResponse;
+              const startProp = page.properties["Start Time"];
+              const endProp = page.properties["End Time"];
+              if (
+                startProp?.type === "date" &&
+                startProp.date &&
+                endProp?.type === "date" &&
+                endProp.date
+              ) {
+                const s = Date.parse(startProp.date.start);
+                const e = Date.parse(endProp.date.start);
+                if (Number.isFinite(s) && Number.isFinite(e) && e > s) {
+                  total += Math.floor((e - s) / 1000);
+                }
+              }
+            }
+            cursor = res.has_more ? res.next_cursor ?? undefined : undefined;
+          } while (cursor);
+          return total;
+        } catch (err) {
+          console.warn(
+            `fetchTodaySessionsSeconds failed for ${pairing.label}:`,
+            err,
+          );
+          return 0;
+        }
+      }),
+    );
+    return perPairing.reduce((a, b) => a + b, 0);
+  }
+
+  /**
+   * Return up to `limit` tasks the user has recently tracked, deduplicated
+   * by taskId, newest first. Draws from each pairing's Work Sessions DB,
+   * follows the Task relation, resolves titles + client names in bulk.
+   *
+   * Useful for the Recent dropdown so floating tasks that don't meet the
+   * main list's filter still show up.
+   */
+  async fetchRecentTasks(
+    pairings: DbPairing[],
+    teamMemberId: string | null,
+    limit: number,
+  ): Promise<
+    Array<{
+      taskId: string;
+      title: string;
+      teamspace: string;
+      workSessionDbId: string;
+      tasksDbId: string;
+      taskRelationName: string;
+      clientName: string | null;
+      lastTrackedAt: string;
+    }>
+  > {
+    if (pairings.length === 0) return [];
+
+    interface RawEntry {
+      taskId: string;
+      pairing: DbPairing;
+      lastTrackedAt: string;
+    }
+    const raw: RawEntry[] = [];
+
+    await Promise.all(
+      pairings.map(async (pairing) => {
+        try {
+          const params: QueryDatabaseParameters = {
+            database_id: pairing.workSessionDbId,
+            page_size: Math.min(100, limit * 3),
+            sorts: [{ property: "Start Time", direction: "descending" }],
+          };
+          if (teamMemberId) {
+            params.filter = {
+              property: "Team Member",
+              people: { contains: teamMemberId },
+            } as QueryDatabaseParameters["filter"];
+          }
+          const res = await this.client.databases.query(params);
+          for (const r of res.results) {
+            if (!("properties" in r)) continue;
+            const page = r as PageObjectResponse;
+            const taskProp = page.properties["Task"];
+            if (
+              taskProp?.type !== "relation" ||
+              !Array.isArray(taskProp.relation) ||
+              taskProp.relation.length === 0
+            )
+              continue;
+            const startProp = page.properties["Start Time"];
+            const when =
+              startProp?.type === "date" && startProp.date
+                ? startProp.date.start
+                : page.created_time;
+            raw.push({
+              taskId: taskProp.relation[0].id,
+              pairing,
+              lastTrackedAt: when,
+            });
+          }
+        } catch (err) {
+          console.warn(`fetchRecentTasks failed for ${pairing.label}:`, err);
+        }
+      }),
+    );
+
+    // Dedup by taskId keeping the most-recent lastTrackedAt.
+    const byTask = new Map<string, RawEntry>();
+    for (const entry of raw) {
+      const existing = byTask.get(entry.taskId);
+      if (!existing || entry.lastTrackedAt > existing.lastTrackedAt) {
+        byTask.set(entry.taskId, entry);
+      }
+    }
+    const sorted = Array.from(byTask.values())
+      .sort((a, b) => b.lastTrackedAt.localeCompare(a.lastTrackedAt))
+      .slice(0, limit);
+
+    // Resolve task titles + whatever Client relation each has.
+    const titleById = await this.resolvePageTitles(
+      sorted.map((s) => s.taskId),
+    );
+
+    // For client name resolution, fetch the pages again (cheap — batched).
+    const clientByTask = new Map<string, string | null>();
+    await Promise.all(
+      sorted.map(async (s) => {
+        try {
+          const page = await this.client.pages.retrieve({ page_id: s.taskId });
+          if (!("properties" in page)) return;
+          for (const name of CLIENT_RELATION_NAMES) {
+            const p = (page as PageObjectResponse).properties[name];
+            if (
+              p?.type === "relation" &&
+              Array.isArray(p.relation) &&
+              p.relation.length > 0
+            ) {
+              const clientTitles = await this.resolvePageTitles([
+                p.relation[0].id,
+              ]);
+              clientByTask.set(
+                s.taskId,
+                clientTitles.get(p.relation[0].id) ?? null,
+              );
+              return;
+            }
+          }
+        } catch {
+          /* ignored */
+        }
+      }),
+    );
+
+    return sorted.map((s) => ({
+      taskId: s.taskId,
+      title: titleById.get(s.taskId) ?? "(untitled)",
+      teamspace: s.pairing.label,
+      workSessionDbId: s.pairing.workSessionDbId,
+      tasksDbId: s.pairing.tasksDbId,
+      taskRelationName: s.pairing.taskRelationName,
+      clientName: clientByTask.get(s.taskId) ?? null,
+      lastTrackedAt: s.lastTrackedAt,
+    }));
+  }
+
   async createWorkSession(input: WriteSessionInput): Promise<void> {
     const properties: Record<string, unknown> = {
       Name: {
@@ -711,6 +919,28 @@ function parseHmsToMinutes(s: string): number | null {
   const sec = Number.parseInt(match[3], 10);
   if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(sec)) return null;
   return h * 60 + m + sec / 60;
+}
+
+/**
+ * ISO timestamp for 00:00 local-tz of today — Notion's date filter
+ * accepts either a date or a datetime, so a full datetime with offset
+ * is the safest form.
+ */
+function startOfTodayIso(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  // `toISOString()` would flip to UTC and return the wrong day near
+  // midnight in timezones behind UTC. Build the string manually with
+  // the current TZ offset preserved.
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const offsetMinutes = -d.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const offH = pad(Math.floor(Math.abs(offsetMinutes) / 60));
+  const offM = pad(Math.abs(offsetMinutes) % 60);
+  return `${yyyy}-${mm}-${dd}T00:00:00${sign}${offH}:${offM}`;
 }
 
 function describeError(err: unknown): string {

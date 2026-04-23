@@ -84,6 +84,41 @@ export class StatsStore {
   }
 
   /**
+   * Replace today's total with an authoritative value (e.g. a sum
+   * just computed from Notion). Only moves forward — a smaller remote
+   * total won't regress a larger local one, so a queued-but-not-yet-
+   * written session doesn't "disappear" during sync.
+   */
+  async setTodayTotal(seconds: number): Promise<TodayStats> {
+    this.rolloverIfNeeded();
+    const next = Math.max(this.data.today.totalSeconds, Math.floor(seconds));
+    this.data.today.totalSeconds = next;
+    await this.persist();
+    return { ...this.data.today };
+  }
+
+  /**
+   * Merge remote-discovered recent-task snapshots into the local LRU.
+   * Local entries win for the same taskId if they're newer, otherwise
+   * we accept the remote copy. Output is capped at MAX_RECENT.
+   */
+  async mergeRecentFromRemote(remote: RecentTask[]): Promise<RecentTask[]> {
+    const byId = new Map<string, RecentTask>();
+    for (const r of this.data.recent) byId.set(r.taskId, r);
+    for (const r of remote) {
+      const existing = byId.get(r.taskId);
+      if (!existing || r.lastTrackedAt > existing.lastTrackedAt) {
+        byId.set(r.taskId, r);
+      }
+    }
+    this.data.recent = Array.from(byId.values())
+      .sort((a, b) => b.lastTrackedAt.localeCompare(a.lastTrackedAt))
+      .slice(0, MAX_RECENT);
+    await this.persist();
+    return this.getRecent();
+  }
+
+  /**
    * Remember a task as "just tracked". Moves it to the front of the LRU
    * if already present, otherwise prepends and trims to `MAX_RECENT`.
    */

@@ -129,6 +129,12 @@ app.whenReady().then(async () => {
   // Try flushing the offline queue on boot (fire-and-forget)
   setTimeout(() => tryFlushQueue().catch(() => {}), 1500);
 
+  // Hydrate today's total + recent tasks from Notion after the window
+  // appears, so the UI reflects sessions tracked elsewhere (phone, the
+  // Notion UI itself, another machine). Non-blocking — first paint
+  // shows local values, this overwrites them when it resolves.
+  setTimeout(() => hydrateFromNotion().catch(() => {}), 500);
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -137,6 +143,44 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+/**
+ * Pull today's session total + recent-task list from Notion and merge
+ * with whatever we have cached locally. Local stats win when ahead of
+ * Notion (you could be mid-session with a write queued), Notion wins
+ * when behind (another device added something).
+ */
+async function hydrateFromNotion(): Promise<void> {
+  const cfg = configStore.get();
+  if (!cfg.notionToken || cfg.pairings.length === 0) return;
+  const client = ensureNotion();
+
+  try {
+    const notionSeconds = await client.fetchTodaySessionsSeconds(
+      cfg.pairings,
+      cfg.teamMemberId,
+    );
+    const local = stats.getToday();
+    if (notionSeconds > local.totalSeconds) {
+      const updated = await stats.setTodayTotal(notionSeconds);
+      win?.webContents.send("stats:today", updated);
+    }
+  } catch (err) {
+    console.warn("Could not hydrate today total from Notion:", err);
+  }
+
+  try {
+    const remote = await client.fetchRecentTasks(
+      cfg.pairings,
+      cfg.teamMemberId,
+      20,
+    );
+    const merged = await stats.mergeRecentFromRemote(remote);
+    win?.webContents.send("stats:recent", merged);
+  } catch (err) {
+    console.warn("Could not hydrate recent tasks from Notion:", err);
+  }
+}
 
 async function tryFlushQueue(): Promise<void> {
   if (!configStore.get().notionToken) return;

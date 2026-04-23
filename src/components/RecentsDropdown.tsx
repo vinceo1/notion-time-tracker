@@ -56,14 +56,17 @@ export function RecentsDropdown({
       {open ? (
         <div
           role="listbox"
-          className="absolute right-0 z-30 mt-2 w-72 overflow-hidden rounded-md border border-bg-border bg-bg-surface shadow-xl"
+          className="absolute right-0 z-30 mt-2 w-[min(380px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-bg-border bg-bg-surface shadow-2xl"
         >
+          <div className="border-b border-bg-border px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-white/40">
+            Recently tracked
+          </div>
           {recents.length === 0 ? (
-            <div className="px-3 py-6 text-center text-xs text-white/40">
+            <div className="px-4 py-8 text-center text-xs text-white/40">
               No recent tasks yet. Stop a timer and it'll show up here.
             </div>
           ) : (
-            <ul className="max-h-80 overflow-y-auto py-1">
+            <ul className="max-h-96 overflow-y-auto py-1">
               {recents.map((r) => {
                 const context = [r.clientName, r.teamspace]
                   .filter(Boolean)
@@ -73,7 +76,7 @@ export function RecentsDropdown({
                     <button
                       type="button"
                       className={clsx(
-                        "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left transition hover:bg-white/5",
+                        "flex w-full flex-col items-start gap-1 px-4 py-2.5 text-left transition hover:bg-white/5",
                         anyTimerActive && "opacity-60",
                       )}
                       disabled={anyTimerActive}
@@ -90,9 +93,13 @@ export function RecentsDropdown({
                       <div className="w-full truncate text-sm text-white/90">
                         {r.title}
                       </div>
-                      <div className="flex w-full items-center gap-2 text-[10px] text-white/40">
-                        {context ? <span className="truncate">{context}</span> : null}
-                        <span className="ml-auto shrink-0">
+                      <div className="flex w-full items-center gap-2 text-[11px] text-white/40">
+                        {context ? (
+                          <span className="min-w-0 flex-1 truncate">{context}</span>
+                        ) : (
+                          <span className="min-w-0 flex-1" />
+                        )}
+                        <span className="shrink-0 whitespace-nowrap text-[10px]">
                           {formatRelative(r.lastTrackedAt)}
                         </span>
                       </div>
