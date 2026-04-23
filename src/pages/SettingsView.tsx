@@ -336,6 +336,8 @@ function UpdatesSection(): JSX.Element {
     if (!result?.downloadUrl) return;
     setDownloading(true);
     setError(null);
+    setDownloadedPath(null);
+    setInstalling(false);
     setProgress({ bytesDownloaded: 0, totalBytes: null });
     try {
       const r = await api.updater.download(result.downloadUrl);
@@ -369,7 +371,21 @@ function UpdatesSection(): JSX.Element {
           {checking ? "Checking…" : "Check for updates"}
         </button>
 
-        {error ? <div className="text-xs text-red-300">{error}</div> : null}
+        {error ? (
+          <div className="flex flex-col items-start gap-2">
+            <div className="text-xs text-red-300">{error}</div>
+            {result?.downloadUrl ? (
+              <button
+                type="button"
+                className="btn"
+                onClick={handleDownload}
+                disabled={downloading}
+              >
+                {downloading ? "Downloading…" : "Retry download"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {result && result.reason === "no_releases" ? (
           <div className="text-xs text-white/50">

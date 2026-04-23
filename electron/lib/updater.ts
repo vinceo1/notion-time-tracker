@@ -1,9 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { createWriteStream, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 
 export interface UpdateCheckResult {
   currentVersion: string;
@@ -148,9 +146,19 @@ export function isSafeAssetUrl(url: string): boolean {
 
 /**
  * Download the asset to ~/Downloads and return the absolute path of the
- * saved file. Streams to disk (constant memory), times out on stalls,
- * reports progress, rejects untrusted URLs, and never overwrites an
- * existing file — a versioned name like "Foo (1).dmg" is picked instead.
+ * saved file.
+ *
+ * Reads the full body via `response.arrayBuffer()` instead of streaming
+ * through a pipeline. A 150 MB DMG is comfortably within Node's heap
+ * limit on any Mac, and the streaming path via
+ * `Readable.fromWeb → pipeline` has produced truncated/corrupt files
+ * in the wild (hdiutil rejects the result with "image data is corrupt").
+ * The buffer-everything approach is measurably more reliable.
+ *
+ * Also verifies the received byte count matches the server's
+ * `Content-Length` header when present, and throws a clear error if
+ * the two disagree so a truncated download doesn't silently produce a
+ * broken installer.
  */
 export async function downloadAssetToDownloads(
   url: string,
@@ -187,7 +195,7 @@ export async function downloadAssetToDownloads(
     opts?.signal?.removeEventListener("abort", onAbort);
     throw err;
   }
-  if (!res.ok || !res.body) {
+  if (!res.ok) {
     clearTimeout(timer);
     opts?.signal?.removeEventListener("abort", onAbort);
     throw new Error(`Download failed: ${res.status} ${res.statusText}`);
@@ -206,29 +214,48 @@ export async function downloadAssetToDownloads(
   );
 
   const totalHeader = res.headers.get("content-length");
-  const totalBytes = totalHeader ? Number.parseInt(totalHeader, 10) : null;
-  let bytesDownloaded = 0;
+  const expectedBytes = totalHeader
+    ? Number.parseInt(totalHeader, 10)
+    : null;
 
-  // Node's WHATWG ReadableStream → Node Readable for pipeline compatibility.
-  const webStream = res.body;
-  const nodeReadable = Readable.fromWeb(
-    webStream as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
-  );
-
-  // Emit progress on each chunk without buffering the whole body.
-  nodeReadable.on("data", (chunk: Buffer) => {
-    bytesDownloaded += chunk.length;
-    opts?.onProgress?.({
-      bytesDownloaded,
-      totalBytes: Number.isFinite(totalBytes) ? totalBytes : null,
-    });
+  // Immediate "starting" tick so the UI progress bar animates even if
+  // the server buffers the first chunk.
+  opts?.onProgress?.({
+    bytesDownloaded: 0,
+    totalBytes:
+      expectedBytes !== null && Number.isFinite(expectedBytes)
+        ? expectedBytes
+        : null,
   });
 
   try {
-    // `wx` flag on the write stream fails if the temp path already exists
-    // — guards against the pathologically-unlucky duplicate 16-byte suffix.
-    const out = createWriteStream(tmpPath, { flags: "wx" });
-    await pipeline(nodeReadable, out);
+    const buf = Buffer.from(await res.arrayBuffer());
+
+    if (
+      expectedBytes !== null &&
+      Number.isFinite(expectedBytes) &&
+      buf.length !== expectedBytes
+    ) {
+      throw new Error(
+        `Download size mismatch: expected ${expectedBytes} bytes, got ${buf.length}. ` +
+          `The asset is truncated or corrupt — click Download again to retry.`,
+      );
+    }
+
+    // `wx` guards against the pathologically-unlucky duplicate 16-byte
+    // temp-file suffix.
+    await fs.writeFile(tmpPath, buf, { flag: "wx" });
+
+    // Emit a final "100%" progress event so the UI leaves the spinner
+    // state cleanly before we hand control back.
+    opts?.onProgress?.({
+      bytesDownloaded: buf.length,
+      totalBytes:
+        expectedBytes !== null && Number.isFinite(expectedBytes)
+          ? expectedBytes
+          : buf.length,
+    });
+
     const finalPath = await atomicallyPlace(tmpPath, downloadsDir, baseName);
     return finalPath;
   } catch (err) {
