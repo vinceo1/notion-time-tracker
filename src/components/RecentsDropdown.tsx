@@ -73,7 +73,8 @@ export function RecentsDropdown({
                 const context = [r.clientName, r.teamspace]
                   .filter(Boolean)
                   .join(" · ");
-                const tracked = formatMinutes(r.timeTrackedMin);
+                const lastSession = formatMinutes(r.lastSessionMin);
+                const total = formatMinutes(r.timeTrackedMin);
                 return (
                   <li key={r.taskId}>
                     <button
@@ -87,11 +88,12 @@ export function RecentsDropdown({
                         onPick(r);
                         setOpen(false);
                       }}
-                      title={
-                        anyTimerActive
-                          ? "Stop the current timer first"
-                          : `Start timer on ${r.title}`
-                      }
+                      title={buildTooltip({
+                        anyTimerActive,
+                        title: r.title,
+                        total,
+                        lastSession,
+                      })}
                     >
                       <div className="w-full truncate text-sm text-white/90">
                         {r.title}
@@ -104,9 +106,16 @@ export function RecentsDropdown({
                         ) : (
                           <span className="min-w-0 flex-1" />
                         )}
-                        {tracked ? (
-                          <span className="shrink-0 whitespace-nowrap font-mono tabular-nums text-white/50">
-                            ⏱ {tracked}
+                        {lastSession ? (
+                          <span
+                            className="shrink-0 whitespace-nowrap font-mono tabular-nums text-white/50"
+                            title={
+                              total
+                                ? `Last session: ${lastSession} · Total tracked: ${total}`
+                                : `Last session: ${lastSession}`
+                            }
+                          >
+                            ⏱ {lastSession}
                           </span>
                         ) : null}
                         <span className="shrink-0 whitespace-nowrap text-[10px]">
@@ -123,6 +132,19 @@ export function RecentsDropdown({
       ) : null}
     </div>
   );
+}
+
+function buildTooltip(opts: {
+  anyTimerActive: boolean;
+  title: string;
+  total: string | null;
+  lastSession: string | null;
+}): string {
+  if (opts.anyTimerActive) return "Stop the current timer first";
+  const pieces = [`Start timer on ${opts.title}`];
+  if (opts.lastSession) pieces.push(`last session: ${opts.lastSession}`);
+  if (opts.total) pieces.push(`total: ${opts.total}`);
+  return pieces.join(" · ");
 }
 
 function formatMinutes(minutes: number | null): string | null {

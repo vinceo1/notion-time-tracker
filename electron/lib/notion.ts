@@ -562,6 +562,7 @@ export class NotionClient {
       clientName: string | null;
       lastTrackedAt: string;
       timeTrackedMin: number | null;
+      lastSessionMin: number | null;
     }>
   > {
     if (pairings.length === 0) return [];
@@ -570,6 +571,7 @@ export class NotionClient {
       taskId: string;
       pairing: DbPairing;
       lastTrackedAt: string;
+      lastSessionMin: number | null;
     }
     const raw: RawEntry[] = [];
 
@@ -611,14 +613,32 @@ export class NotionClient {
             )
               continue;
             const startProp = page.properties["Start Time"];
+            const endProp = page.properties["End Time"];
             const when =
               startProp?.type === "date" && startProp.date
                 ? startProp.date.start
                 : page.created_time;
+            // Duration of this specific session in minutes (end - start).
+            // Null when one or both fields are missing, so the UI can fall
+            // back gracefully.
+            let sessionMin: number | null = null;
+            if (
+              startProp?.type === "date" &&
+              startProp.date &&
+              endProp?.type === "date" &&
+              endProp.date
+            ) {
+              const s = Date.parse(startProp.date.start);
+              const e = Date.parse(endProp.date.start);
+              if (Number.isFinite(s) && Number.isFinite(e) && e > s) {
+                sessionMin = (e - s) / 60_000;
+              }
+            }
             raw.push({
               taskId: taskProp.relation[0].id,
               pairing,
               lastTrackedAt: when,
+              lastSessionMin: sessionMin,
             });
           }
         } catch (err) {
@@ -713,6 +733,7 @@ export class NotionClient {
       clientName: clientByTask.get(s.taskId) ?? null,
       lastTrackedAt: s.lastTrackedAt,
       timeTrackedMin: timeTrackedByTask.get(s.taskId) ?? null,
+      lastSessionMin: s.lastSessionMin,
     }));
   }
 

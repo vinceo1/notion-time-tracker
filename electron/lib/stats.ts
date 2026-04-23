@@ -99,17 +99,45 @@ export class StatsStore {
 
   /**
    * Merge remote-discovered recent-task snapshots into the local LRU.
-   * Local entries win for the same taskId if they're newer, otherwise
-   * we accept the remote copy. Output is capped at MAX_RECENT.
+   *
+   * Fields are merged individually rather than whole-record: the local
+   * entry wins on fields it knows more about (e.g. the exact session
+   * length from a just-completed Stop), but any field the local entry
+   * doesn't have yet (e.g. Notion's total `Time Tracked` formula for a
+   * task that was only ever tracked here before 0.4.10 shipped the
+   * field) is backfilled from the remote copy.
+   *
+   * `lastTrackedAt` takes the later of the two — useful when Notion has
+   * a session we haven't seen locally.
+   *
+   * Output is capped at MAX_RECENT and sorted newest-first.
    */
   async mergeRecentFromRemote(remote: RecentTask[]): Promise<RecentTask[]> {
     const byId = new Map<string, RecentTask>();
     for (const r of this.data.recent) byId.set(r.taskId, r);
     for (const r of remote) {
       const existing = byId.get(r.taskId);
-      if (!existing || r.lastTrackedAt > existing.lastTrackedAt) {
+      if (!existing) {
         byId.set(r.taskId, r);
+        continue;
       }
+      byId.set(r.taskId, {
+        ...existing,
+        // Freshest wins for flagships like the timestamp.
+        lastTrackedAt:
+          r.lastTrackedAt > existing.lastTrackedAt
+            ? r.lastTrackedAt
+            : existing.lastTrackedAt,
+        // Titles drift (rename in Notion); prefer the remote if newer.
+        title:
+          r.lastTrackedAt > existing.lastTrackedAt ? r.title : existing.title,
+        clientName: existing.clientName ?? r.clientName,
+        timeTrackedMin: existing.timeTrackedMin ?? r.timeTrackedMin,
+        lastSessionMin:
+          r.lastTrackedAt > existing.lastTrackedAt
+            ? r.lastSessionMin ?? existing.lastSessionMin
+            : existing.lastSessionMin ?? r.lastSessionMin,
+      });
     }
     this.data.recent = Array.from(byId.values())
       .sort((a, b) => b.lastTrackedAt.localeCompare(a.lastTrackedAt))

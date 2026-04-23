@@ -364,6 +364,7 @@ function registerIpc(): void {
         timeTrackedMin:
           (existing?.timeTrackedMin ?? knownTask?.timeTrackedMin ?? 0) +
           durationSec / 60,
+        lastSessionMin: durationSec / 60,
       });
       win?.webContents.send("stats:recent", newRecent);
 

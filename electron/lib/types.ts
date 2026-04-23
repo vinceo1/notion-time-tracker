@@ -144,6 +144,11 @@ export interface RecentTask {
    * refreshed from Notion yet.
    */
   timeTrackedMin: number | null;
+  /**
+   * Minutes the most-recent Work Session on this task lasted. Lets the
+   * Recent dropdown show "2m · 46m ago" instead of just relative time.
+   */
+  lastSessionMin: number | null;
 }
 
 export interface TodayStats {
