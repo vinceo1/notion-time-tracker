@@ -1,12 +1,14 @@
 name: Release
 
-# Builds a DMG on macOS (Apple Silicon) and a NSIS installer on Windows
-# whenever a version tag like v1.2.3 is pushed. Assets are attached to
-# the auto-created GitHub Release, which the in-app update checker reads.
+# Builds two DMGs on macOS (arm64 + x64) and a NSIS installer on
+# Windows whenever a version tag like v1.2.3 is pushed. Assets are
+# attached to the auto-created GitHub Release, which the in-app
+# update checker reads.
 #
-# We deliberately publish only the two files people install with:
-#   - Notion Time Tracker-<ver>-arm64.dmg
-#   - Notion Time Tracker Setup <ver>.exe
+# We deliberately publish only the three files people install with:
+#   - Notion Time Tracker-<ver>-arm64.dmg  (Apple Silicon)
+#   - Notion Time Tracker-<ver>-x64.dmg    (Intel Macs)
+#   - Notion Time Tracker Setup <ver>.exe  (Windows)
 # No .zip, no portable .exe, no .blockmap files — they just add noise
 # to the release page.
 on:
@@ -27,7 +29,7 @@ permissions:
 
 jobs:
   build-mac:
-    name: macOS (arm64) build
+    name: macOS (arm64 + x64) build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,13 +49,17 @@ jobs:
       - name: Generate icons
         run: npm run icons
 
-      - name: Build DMG
+      - name: Build DMGs (arm64 + x64)
         env:
           # Disable electron-builder's auto-publish path; we'll upload assets
           # explicitly in the next step. Also skip code-signing.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           GH_TOKEN: ""
-        run: npm run pack:mac
+        # One electron-builder invocation produces two separate DMGs with
+        # arch suffixes in their filenames. We intentionally do NOT use
+        # `--universal` because `@electron/universal`'s asar-merge trips
+        # on shared Vite `dist/` temp folders; two plain DMGs sidestep it.
+        run: npm run pack:mac:both
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
