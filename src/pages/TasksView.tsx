@@ -105,6 +105,17 @@ export function TasksView({
     [],
   );
 
+  const handleSearchPick = useCallback(
+    (t: TaskItem) => {
+      if (timer) return;
+      // Prefer the TaskItem already in state (has the freshest status/
+      // client name); otherwise start on the one the search returned.
+      const fromList = tasks.find((existing) => existing.id === t.id);
+      onStart(fromList ?? t);
+    },
+    [timer, tasks, onStart],
+  );
+
   const handleRecentPick = useCallback(
     (r: RecentTask) => {
       if (timer) return;
@@ -154,6 +165,7 @@ export function TasksView({
             recents={recents}
             anyTimerActive={timer !== null}
             onPick={handleRecentPick}
+            onPickTask={handleSearchPick}
           />
           <button
             type="button"

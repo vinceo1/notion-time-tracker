@@ -4,6 +4,7 @@ import type {
   DiscoverResult,
   NotionUser,
   RecentTask,
+  TaskItem,
   TasksResult,
   TodayStats,
   WriteSessionInput,
@@ -26,6 +27,8 @@ const api = {
     listUsers: (): Promise<NotionUser[]> => ipcRenderer.invoke("notion:users"),
     discover: (): Promise<DiscoverResult> => ipcRenderer.invoke("notion:discover"),
     tasks: (): Promise<TasksResult> => ipcRenderer.invoke("notion:tasks"),
+    searchTasks: (query: string): Promise<TaskItem[]> =>
+      ipcRenderer.invoke("notion:searchTasks", query),
     writeSession: (input: WriteSessionInput): Promise<WriteSessionResult> =>
       ipcRenderer.invoke("notion:writeSession", input),
     updateTaskStatus: (

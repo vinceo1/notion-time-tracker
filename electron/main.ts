@@ -299,6 +299,22 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(
+    "notion:searchTasks",
+    async (_evt, query: unknown): Promise<TaskItem[]> => {
+      const q = typeof query === "string" ? query : "";
+      if (q.trim().length === 0) return [];
+      const cfg = configStore.get();
+      const client = ensureNotion();
+      const results = await client.searchTasks(q, cfg.pairings);
+      // Merge search hits into lastTasks so a later writeSession can
+      // recover the trusted title from our own cache instead of
+      // trusting whatever the renderer echoes back.
+      for (const t of results) lastTasks.set(t.id, t);
+      return results;
+    },
+  );
+
+  ipcMain.handle(
     "notion:writeSession",
     async (_evt, input: WriteSessionInput): Promise<{ ok: true } | { ok: false; queued: true }> => {
       // Validate the target matches a trusted pairing BEFORE any attempt

@@ -304,6 +304,70 @@ export class NotionClient {
   }
 
   /**
+   * Free-text search across every configured Tasks DB. Unlike queryTasks
+   * this does NOT filter by assignee or status — the whole point of the
+   * search dropdown is to find floating tasks and tasks assigned to other
+   * people that wouldn't otherwise appear in the main list.
+   *
+   * Uses Notion's global search API (one HTTP call, ranked by relevance)
+   * rather than per-DB `contains` filters, because the title property
+   * name varies per teamspace ("Name", "Task", …) and Notion's search
+   * does fuzzy title matching natively.
+   */
+  async searchTasks(
+    query: string,
+    pairings: DbPairing[],
+  ): Promise<TaskItem[]> {
+    const trimmed = query.trim();
+    if (trimmed.length === 0 || pairings.length === 0) return [];
+
+    const pairingByDbId = new Map<string, DbPairing>();
+    for (const p of pairings) {
+      pairingByDbId.set(normalizeId(p.tasksDbId), p);
+    }
+
+    // Notion's search returns up to page_size results across the whole
+    // workspace the integration can see. Our integration is scoped to
+    // the 4 Tasks DBs anyway, so the post-filter below is cheap.
+    const res = await this.client.search({
+      query: trimmed,
+      filter: { value: "page", property: "object" },
+      page_size: 50,
+    });
+
+    const pickedPairings: DbPairing[] = [];
+    const pages: PageObjectResponse[] = [];
+    for (const r of res.results) {
+      if (!("properties" in r)) continue;
+      const page = r as PageObjectResponse;
+      const parent = page.parent;
+      if (parent.type !== "database_id") continue;
+      const pairing = pairingByDbId.get(normalizeId(parent.database_id));
+      if (!pairing) continue;
+      pages.push(page);
+      pickedPairings.push(pairing);
+    }
+
+    const mapped = pages.map((page, i) =>
+      mapPageToTaskItem(page, pickedPairings[i]),
+    );
+    const clientIds = mapped
+      .map((m) => m.clientRelationId)
+      .filter((id): id is string => !!id);
+    const clientNameById =
+      clientIds.length > 0
+        ? await this.resolvePageTitles(clientIds)
+        : new Map<string, string | null>();
+
+    return mapped.map(({ item, clientRelationId }) => ({
+      ...item,
+      clientName: clientRelationId
+        ? clientNameById.get(clientRelationId) ?? null
+        : null,
+    }));
+  }
+
+  /**
    * Inspect a Tasks DB and pull out the bits of schema the app needs to
    * filter, render and mutate safely. Designed to be called during Discover
    * and again during silent migration for pairings saved before these
