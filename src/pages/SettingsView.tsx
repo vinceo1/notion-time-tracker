@@ -1,22 +1,13 @@
 import { useEffect, useState } from "react";
-import clsx from "clsx";
 import {
   api,
   type AppConfig,
   type DbPairing,
   type NotionUser,
-  type TaskType,
 } from "../api";
 
 // Space reserved on macOS for the hidden-inset traffic-light buttons.
 const MAC_TRAFFIC_LIGHT_PX = 78;
-
-const ALL_TYPES: TaskType[] = [
-  "To do List",
-  "Scorecard",
-  "Weekly Report",
-  "Time Tracking Tasks",
-];
 
 interface Props {
   config: AppConfig;
@@ -38,7 +29,6 @@ export function SettingsView({
   const [tokenInput, setTokenInput] = useState(config.notionToken);
   const [teamMemberId, setTeamMemberId] = useState(config.teamMemberId ?? "");
   const [parentUrl, setParentUrl] = useState(config.workSessionsParentUrl);
-  const [typeFilter, setTypeFilter] = useState<TaskType[]>(config.typeFilter);
   const [pairings, setPairings] = useState<DbPairing[]>(config.pairings);
 
   const [users, setUsers] = useState<NotionUser[]>([]);
@@ -103,19 +93,12 @@ export function SettingsView({
         notionToken: tokenInput,
         teamMemberId: teamMemberId || null,
         workSessionsParentUrl: parentUrl,
-        typeFilter,
         pairings,
       });
       onSaved(next);
     } finally {
       setSaving(false);
     }
-  }
-
-  function toggleType(t: TaskType) {
-    setTypeFilter((cur) =>
-      cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t],
-    );
   }
 
   // Preload users if token already set
@@ -269,32 +252,6 @@ export function SettingsView({
             </div>
           </Section>
 
-          <Section
-            title="4. Task type filter (optional)"
-            description="Leave empty to show all task types. Pick one or more to narrow the list."
-          >
-            <div className="flex flex-wrap gap-2">
-              {ALL_TYPES.map((t) => {
-                const active = typeFilter.includes(t);
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => toggleType(t)}
-                    className={clsx(
-                      "rounded-full border px-3 py-1 text-xs transition",
-                      active
-                        ? "border-white bg-white text-black"
-                        : "border-bg-border bg-bg-elev text-white/70 hover:border-white/30 hover:text-white",
-                    )}
-                  >
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
-          </Section>
-
           <UpdatesSection
             hasActiveTimer={hasActiveTimer}
             onStopTimer={onStopTimer}
@@ -386,7 +343,7 @@ function UpdatesSection({
 
   return (
     <Section
-      title="5. Updates"
+      title="4. Updates"
       description="Check GitHub for a newer release. Your Notion token and settings are preserved across installs."
     >
       <div className="flex flex-col gap-2">

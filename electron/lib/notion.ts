@@ -21,6 +21,9 @@ import type {
   WriteSessionInput,
 } from "./types.js";
 
+// `TaskType` is still used below for typing the resolved Type column;
+// the import stays even though typeFilter went away in v0.5.0.
+
 const EXCLUDED_STATUSES = ["Complete", "Blocked"];
 
 /**
@@ -184,9 +187,8 @@ export class NotionClient {
   async queryTasks(opts: {
     pairings: DbPairing[];
     assigneeId: string | null;
-    typeFilter: TaskType[];
   }): Promise<TasksResult> {
-    const { pairings, assigneeId, typeFilter } = opts;
+    const { pairings, assigneeId } = opts;
     if (pairings.length === 0) return { tasks: [], errors: [] };
 
     const perPairing = await Promise.all(
@@ -290,17 +292,7 @@ export class NotionClient {
       }
     }
 
-    const filtered =
-      typeFilter.length === 0
-        ? tasksWithClient
-        : (() => {
-            const allowed = new Set<string>(typeFilter);
-            return tasksWithClient.filter(
-              (t) => t.type !== null && allowed.has(t.type),
-            );
-          })();
-
-    return { tasks: filtered, errors };
+    return { tasks: tasksWithClient, errors };
   }
 
   /**

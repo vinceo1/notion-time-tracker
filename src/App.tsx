@@ -4,8 +4,10 @@ import {
   type AppConfig,
   type RecentTask,
   type TaskItem,
+  type UpdateCheckResult,
 } from "./api";
 import { ActiveTimerBar } from "./components/ActiveTimerBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { useTimer } from "./hooks/useTimer";
 import { SettingsView } from "./pages/SettingsView";
 import { TasksView } from "./pages/TasksView";
@@ -30,6 +32,9 @@ export default function App(): JSX.Element {
   const [recents, setRecents] = useState<RecentTask[]>([]);
   const [tasksRefreshKey, setTasksRefreshKey] = useState<number>(0);
   const [topError, setTopError] = useState<string | null>(null);
+  const [updateBanner, setUpdateBanner] = useState<UpdateCheckResult | null>(
+    null,
+  );
 
   const elapsed = useTimer(timer?.startedAt ?? null, timer !== null);
 
@@ -45,6 +50,28 @@ export default function App(): JSX.Element {
   useEffect(() => {
     api.queue.size().then(setQueuedCount).catch(() => {});
     return api.queue.onUpdated(setQueuedCount);
+  }, []);
+
+  // Update banner: subscribe to the periodic background check and also
+  // ask main for whatever the most recent check produced (so the banner
+  // repaints on app reopen without forcing another GitHub round-trip).
+  // Suppress the banner once the user dismisses this exact version.
+  useEffect(() => {
+    let cancelled = false;
+    api.updater
+      .lastBackgroundResult()
+      .then((r) => {
+        if (cancelled) return;
+        if (r && r.hasUpdate) setUpdateBanner(r);
+      })
+      .catch(() => {});
+    const off = api.updater.onAvailable((r) => {
+      if (r.hasUpdate) setUpdateBanner(r);
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
   }, []);
 
   // Today total + recent tasks: primed from disk, then live-updated
@@ -121,6 +148,17 @@ export default function App(): JSX.Element {
 
   return (
     <div className="flex h-full flex-col bg-bg text-white">
+      {updateBanner ? (
+        <UpdateBanner
+          result={updateBanner}
+          onOpenSettings={() => setView("settings")}
+          onDismiss={() => {
+            const v = updateBanner.latestVersion;
+            setUpdateBanner(null);
+            if (v) api.updater.dismissVersion(v).catch(() => {});
+          }}
+        />
+      ) : null}
       <ActiveTimerBar
         activeTask={timer?.task ?? null}
         currentSessionSeconds={elapsed}

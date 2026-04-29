@@ -81,6 +81,30 @@ const api = {
       ipcRenderer.on("updater:progress", listener);
       return () => ipcRenderer.removeListener("updater:progress", listener);
     },
+    /**
+     * Subscribe to the periodic background update check. Fires whenever
+     * a new version is available AND the user hasn't dismissed this
+     * exact version. The renderer renders a banner; clicking "Later"
+     * calls dismissVersion so we don't notify again until the next bump.
+     */
+    onAvailable: (cb: (r: UpdateCheckResult) => void): (() => void) => {
+      const listener = (_: unknown, r: UpdateCheckResult) => cb(r);
+      ipcRenderer.on("updater:available", listener);
+      return () => ipcRenderer.removeListener("updater:available", listener);
+    },
+    /**
+     * Returns whatever the most recent background or manual check
+     * produced — used to repaint the banner on app boot without a
+     * fresh GitHub round-trip.
+     */
+    lastBackgroundResult: (): Promise<UpdateCheckResult | null> =>
+      ipcRenderer.invoke("updater:lastBackgroundResult"),
+    /**
+     * Persist the version the user just declined so we don't keep
+     * nagging them. Pass null to clear the dismissal.
+     */
+    dismissVersion: (version: string | null): Promise<{ ok: true }> =>
+      ipcRenderer.invoke("updater:dismissVersion", version),
   },
 };
 

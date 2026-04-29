@@ -51,6 +51,14 @@ let notion: NotionClient | null = null;
 let lastCheckedDownloadUrl: string | null = null;
 let lastTasks: Map<string, TaskItem> = new Map();
 
+/**
+ * Last `UpdateCheckResult` returned by the periodic background check.
+ * Cached so the renderer can ask for it immediately on boot (e.g. to
+ * re-render the banner after a window restart) without re-hitting the
+ * GitHub API. Cleared back to null when the user dismisses or installs.
+ */
+let lastBackgroundUpdateResult: UpdateCheckResult | null = null;
+
 function ensureNotion(): NotionClient {
   const cfg = configStore.get();
   if (!cfg.notionToken) {
@@ -132,10 +140,78 @@ app.whenReady().then(async () => {
   // shows local values, this overwrites them when it resolves.
   setTimeout(() => hydrateFromNotion().catch(() => {}), 500);
 
+  // Watch for the local calendar date changing while the app is open
+  // so the "Today" total doesn't keep yesterday's number into the next
+  // day. A minute-tick is plenty: the user's wall clock won't notice
+  // a 60-second delay, and this is robust against system sleep + DST
+  // (the next tick after wake-up just sees the new date and rolls
+  // over). The store's own rolloverIfNeeded does the actual reset; we
+  // just nudge it and push the new total to the renderer.
+  startDateRolloverWatcher();
+
+  // Background update check. First call ~30 s after boot to give the
+  // user a moment to start working without us hammering GitHub on
+  // launch, then every 24 h. Failures are swallowed.
+  setTimeout(() => runBackgroundUpdateCheck().catch(() => {}), 30_000);
+  setInterval(
+    () => runBackgroundUpdateCheck().catch(() => {}),
+    24 * 60 * 60 * 1000,
+  );
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+function localTodayIso(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function startDateRolloverWatcher(): void {
+  let lastSeenDate = localTodayIso();
+  setInterval(() => {
+    const now = localTodayIso();
+    if (now === lastSeenDate) return;
+    lastSeenDate = now;
+    // getToday() runs the store's internal rolloverIfNeeded, returning
+    // the freshly-zeroed total for the new local day.
+    const fresh = stats.getToday();
+    win?.webContents.send("stats:today", fresh);
+  }, 60_000);
+}
+
+/**
+ * Hit GitHub once and, when there's an update the user hasn't already
+ * dismissed for this exact version, push it to the renderer so the
+ * App-level banner can show. Also caches the URL the same way
+ * updater:check does, so a follow-up download IPC validates against
+ * a server-blessed URL rather than whatever the renderer claims.
+ */
+async function runBackgroundUpdateCheck(): Promise<void> {
+  try {
+    const result = await checkForUpdate(
+      app.getVersion(),
+      process.platform,
+      process.arch,
+    );
+    lastBackgroundUpdateResult = result;
+    if (result.downloadUrl) {
+      lastCheckedDownloadUrl = result.downloadUrl;
+    }
+    if (!result.hasUpdate || !result.latestVersion) return;
+    const dismissed = configStore.get().lastDismissedUpdateVersion;
+    if (dismissed && dismissed === result.latestVersion) return;
+    win?.webContents.send("updater:available", result);
+  } catch (err) {
+    // Network hiccup, GitHub flake, rate limit — don't surface this to
+    // the user. The next 24-hour tick will retry.
+    console.warn("Background update check failed:", err);
+  }
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -287,7 +363,6 @@ function registerIpc(): void {
     const result = await client.queryTasks({
       pairings: current.pairings,
       assigneeId: current.teamMemberId,
-      typeFilter: current.typeFilter,
     });
 
     // Cache the tasks we just returned. Status updates (which mutate
@@ -468,8 +543,27 @@ function registerIpc(): void {
     // Remember the URL the server blessed so the renderer can't ask us to
     // download anything else. Reset to null when there's no update offered.
     lastCheckedDownloadUrl = result.downloadUrl;
+    // Update banner consumers also share this cache so a manual check
+    // and the periodic background check stay in sync.
+    lastBackgroundUpdateResult = result;
     return result;
   });
+
+  // Lets the renderer reconstruct the banner state on a fresh App mount
+  // without forcing another GitHub round-trip.
+  ipcMain.handle(
+    "updater:lastBackgroundResult",
+    (): UpdateCheckResult | null => lastBackgroundUpdateResult,
+  );
+
+  ipcMain.handle(
+    "updater:dismissVersion",
+    async (_evt, version: unknown): Promise<{ ok: true }> => {
+      const v = typeof version === "string" && version.trim() ? version : null;
+      await configStore.update({ lastDismissedUpdateVersion: v });
+      return { ok: true };
+    },
+  );
 
   ipcMain.handle(
     "updater:download",

@@ -80,19 +80,25 @@ export interface AppConfig {
   notionToken: string;
   teamMemberId: string | null;
   pairings: DbPairing[];
-  /** If non-empty, only tasks whose Type is in this list are shown. Empty = all types. */
-  typeFilter: TaskType[];
   /** Work Sessions parent page URL (contains the per-teamspace session DBs). */
   workSessionsParentUrl: string;
+  /**
+   * Latest version the user explicitly dismissed via the in-app update
+   * banner. Periodic checks suppress the banner while
+   * `latestVersion === lastDismissedUpdateVersion`; bumping past it
+   * (e.g. v0.5.1 → v0.5.2) re-enables the prompt automatically. Null
+   * when the user has never dismissed an update.
+   */
+  lastDismissedUpdateVersion: string | null;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   notionToken: "",
   teamMemberId: null,
   pairings: [],
-  typeFilter: [],
   workSessionsParentUrl:
     "https://www.notion.so/ecom-wizards/Work-Sessions-3410df49a4a8800fb975c7a979386060",
+  lastDismissedUpdateVersion: null,
 };
 
 export interface TaskItem {

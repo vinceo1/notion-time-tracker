@@ -78,7 +78,7 @@ export function TasksView({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, config.teamMemberId, config.typeFilter, config.pairings]);
+  }, [refreshKey, config.teamMemberId, config.pairings]);
 
   const handleOpenInNotion = useCallback((url: string) => {
     api.app.openExternal(url);
