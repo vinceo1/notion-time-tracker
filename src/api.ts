@@ -14,6 +14,7 @@ export type {
   DiscoverResult,
   NotionColor,
   NotionUser,
+  PomodoroConfig,
   RecentTask,
   StatusOption,
   TaskItem,

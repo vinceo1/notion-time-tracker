@@ -167,6 +167,7 @@ export class NotionClient {
           assigneePropertyName: meta.assigneePropertyName,
           statusPropertyName: meta.statusPropertyName,
           completedStatusNames: meta.completedStatusNames,
+          titlePropertyName: meta.titlePropertyName,
         });
       } catch (err) {
         warnings.push(
@@ -309,6 +310,7 @@ export class NotionClient {
   async searchTasks(
     query: string,
     pairings: DbPairing[],
+    opts: { includeRecentCompleted?: boolean } = {},
   ): Promise<TaskItem[]> {
     const trimmed = query.trim();
     if (trimmed.length === 0 || pairings.length === 0) return [];
@@ -318,17 +320,20 @@ export class NotionClient {
       pairingByDbId.set(normalizeId(p.tasksDbId), p);
     }
 
-    // Notion's search returns up to page_size results across the whole
-    // workspace the integration can see. Our integration is scoped to
-    // the 4 Tasks DBs anyway, so the post-filter below is cheap.
+    const pagesById = new Map<
+      string,
+      { page: PageObjectResponse; pairing: DbPairing; notionRank: number }
+    >();
+
+    // Notion's global search is useful, but can rank plural/singular
+    // near-matches strangely. Keep it, then supplement with direct title
+    // contains queries below.
     const res = await this.client.search({
       query: trimmed,
       filter: { value: "page", property: "object" },
       page_size: 50,
     });
-
-    const pickedPairings: DbPairing[] = [];
-    const pages: PageObjectResponse[] = [];
+    let notionRank = 0;
     for (const r of res.results) {
       if (!("properties" in r)) continue;
       const page = r as PageObjectResponse;
@@ -336,12 +341,52 @@ export class NotionClient {
       if (parent.type !== "database_id") continue;
       const pairing = pairingByDbId.get(normalizeId(parent.database_id));
       if (!pairing) continue;
-      pages.push(page);
-      pickedPairings.push(pairing);
+      pagesById.set(page.id, { page, pairing, notionRank });
+      notionRank += 1;
     }
 
-    const mapped = pages.map((page, i) =>
-      mapPageToTaskItem(page, pickedPairings[i]),
+    const variants = searchVariants(trimmed);
+    await Promise.all(
+      pairings.map(async (pairing) => {
+        const titleProperty = pairing.titlePropertyName ?? "Name";
+        await Promise.all(
+          variants.map(async (variant) => {
+            try {
+              const direct = await this.client.databases.query({
+                database_id: pairing.tasksDbId,
+                filter: {
+                  property: titleProperty,
+                  title: { contains: variant },
+                },
+                page_size: 20,
+              });
+              for (const r of direct.results) {
+                if (!("properties" in r)) continue;
+                const page = r as PageObjectResponse;
+                if (!pagesById.has(page.id)) {
+                  pagesById.set(page.id, {
+                    page,
+                    pairing,
+                    notionRank: 1000,
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn(
+                `Title search failed for ${pairing.label}:`,
+                describeError(err),
+              );
+            }
+          }),
+        );
+      }),
+    );
+
+    const mapped = Array.from(pagesById.values()).map(
+      ({ page, pairing, notionRank: rank }) => ({
+        ...mapPageToTaskItem(page, pairing),
+        notionRank: rank,
+      }),
     );
     const clientIds = mapped
       .map((m) => m.clientRelationId)
@@ -351,12 +396,27 @@ export class NotionClient {
         ? await this.resolvePageTitles(clientIds)
         : new Map<string, string | null>();
 
-    return mapped.map(({ item, clientRelationId }) => ({
-      ...item,
-      clientName: clientRelationId
-        ? clientNameById.get(clientRelationId) ?? null
-        : null,
-    }));
+    return mapped
+      .map(({ item, clientRelationId, notionRank: rank }) => ({
+        item: {
+          ...item,
+          clientName: clientRelationId
+            ? clientNameById.get(clientRelationId) ?? null
+            : null,
+        },
+        rank,
+      }))
+      .filter(({ item }) => {
+        if (!item.isCompleted) return true;
+        return opts.includeRecentCompleted && isRecentCompleted(item);
+      })
+      .sort((a, b) => {
+        const scoreA = searchScore(trimmed, a.item, a.rank);
+        const scoreB = searchScore(trimmed, b.item, b.rank);
+        return scoreB - scoreA;
+      })
+      .slice(0, 30)
+      .map(({ item }) => item);
   }
 
   /**
@@ -373,12 +433,21 @@ export class NotionClient {
     completedStatusNames: string[];
     statusPropertyName: string | null;
     assigneePropertyName: string | null;
+    titlePropertyName: string | null;
   }> {
     try {
       const db = (await this.client.databases.retrieve({
         database_id: tasksDbId,
       })) as DatabaseObjectResponse;
       const props = db.properties ?? {};
+
+      let titlePropertyName: string | null = null;
+      for (const [name, prop] of Object.entries(props)) {
+        if (prop.type === "title") {
+          titlePropertyName = name;
+          break;
+        }
+      }
 
       // Status: find by type. Grab options (with their colors so the UI
       // can match Notion's native dot) + whatever Notion considers the
@@ -444,6 +513,7 @@ export class NotionClient {
         completedStatusNames,
         statusPropertyName,
         assigneePropertyName,
+        titlePropertyName,
       };
     } catch (err) {
       warnings.push(
@@ -454,6 +524,7 @@ export class NotionClient {
         completedStatusNames: [],
         statusPropertyName: null,
         assigneePropertyName: null,
+        titlePropertyName: null,
       };
     }
   }
@@ -866,6 +937,16 @@ function buildTaskFilter(
 // Type property names ("Type" vs "Task Type").
 const TYPE_PROPERTY_NAMES = ["Type", "Task Type"];
 const DUE_PROPERTY_NAMES = ["Due", "Due Date", "Deadline"];
+const COMPLETION_DATE_PROPERTY_NAMES = [
+  "Completed",
+  "Completed At",
+  "Completed Time",
+  "Completion Date",
+  "Done",
+  "Done At",
+  "Finished",
+  "Finished At",
+];
 // The "which brand is this task for" relation has been renamed across
 // teamspaces (Client → Brand). Accept both; first hit wins.
 const CLIENT_RELATION_NAMES = ["Brand", "Client"];
@@ -892,6 +973,56 @@ function normalizeColor(raw: string | undefined | null): NotionColor {
   const lower = raw.toLowerCase();
   const hit = NOTION_COLORS.find((c) => c === lower);
   return hit ?? "default";
+}
+
+function searchVariants(query: string): string[] {
+  const lower = query.toLowerCase().trim();
+  const variants = new Set<string>([query, lower]);
+  for (const token of lower.split(/\s+/).filter(Boolean)) {
+    variants.add(token);
+    if (token.endsWith("ies") && token.length > 3) {
+      variants.add(`${token.slice(0, -3)}y`);
+    }
+    if (token.endsWith("s") && token.length > 3) {
+      variants.add(token.slice(0, -1));
+    } else if (token.length > 2) {
+      variants.add(`${token}s`);
+    }
+  }
+  return Array.from(variants).filter((v) => v.length > 0);
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function searchScore(query: string, item: TaskItem, notionRank: number): number {
+  const title = normalizeSearchText(item.title);
+  const q = normalizeSearchText(query);
+  const variants = searchVariants(q).map(normalizeSearchText);
+  let score = Math.max(0, 100 - Math.min(notionRank, 100));
+  if (title === q) score += 1000;
+  if (title.includes(q)) score += 600;
+  for (const variant of variants) {
+    if (!variant) continue;
+    if (title === variant) score += 500;
+    else if (title.includes(variant)) score += 300;
+  }
+  if (!item.isCompleted) score += 250;
+  else score -= 250;
+  return score;
+}
+
+function isRecentCompleted(item: TaskItem): boolean {
+  if (!item.completedAt) return false;
+  const completedAt = Date.parse(item.completedAt);
+  if (!Number.isFinite(completedAt)) return false;
+  return Date.now() - completedAt <= 14 * 24 * 60 * 60 * 1000;
 }
 
 function mapPageToTaskItem(
@@ -948,6 +1079,23 @@ function mapPageToTaskItem(
   if (status && !statusColor) {
     const match = pairing.statusOptions.find((o) => o.name === status);
     if (match) statusColor = match.color;
+  }
+  const completedNames =
+    pairing.completedStatusNames.length > 0
+      ? pairing.completedStatusNames
+      : EXCLUDED_STATUSES;
+  const isCompleted = status ? completedNames.includes(status) : false;
+
+  let completedAt: string | null = null;
+  if (isCompleted) {
+    for (const name of COMPLETION_DATE_PROPERTY_NAMES) {
+      const p = props[name];
+      if (p && p.type === "date" && p.date) {
+        completedAt = p.date.start;
+        break;
+      }
+    }
+    completedAt = completedAt ?? page.last_edited_time ?? null;
   }
 
   // Priority
@@ -1029,6 +1177,8 @@ function mapPageToTaskItem(
       timeTrackedMin,
       clientName: null, // filled in later by resolvePageTitles
       statusOptions: pairing.statusOptions ?? [],
+      isCompleted,
+      completedAt,
     },
     clientRelationId,
   };

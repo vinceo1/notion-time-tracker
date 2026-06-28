@@ -28,6 +28,7 @@ export function RecentsDropdown({
 }: Props): JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [includeRecentCompleted, setIncludeRecentCompleted] = useState(false);
   const [results, setResults] = useState<TaskItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export function RecentsDropdown({
     setSearchError(null);
     const handle = window.setTimeout(() => {
       api.notion
-        .searchTasks(trimmed)
+        .searchTasks(trimmed, { includeRecentCompleted })
         .then((hits) => {
           if (cancelled) return;
           setResults(hits);
@@ -97,7 +98,7 @@ export function RecentsDropdown({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [query]);
+  }, [query, includeRecentCompleted]);
 
   const isSearching = query.trim().length >= 2;
 
@@ -132,6 +133,25 @@ export function RecentsDropdown({
               spellCheck={false}
               autoComplete="off"
             />
+            {isSearching ? (
+              <div className="mt-2 flex items-center gap-1">
+                <span className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-black">
+                  Open
+                </span>
+                <button
+                  type="button"
+                  className={clsx(
+                    "rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition",
+                    includeRecentCompleted
+                      ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-200"
+                      : "border-bg-border bg-transparent text-white/40 hover:text-white/70",
+                  )}
+                  onClick={() => setIncludeRecentCompleted((v) => !v)}
+                >
+                  Recent completed
+                </button>
+              </div>
+            ) : null}
           </div>
           {isSearching ? (
             <SearchResults

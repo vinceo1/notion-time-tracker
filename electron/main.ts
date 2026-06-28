@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, shell } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { NotionClient } from "./lib/notion.js";
@@ -22,6 +22,7 @@ import type {
   TaskItem,
   TasksResult,
   TodayStats,
+  WindowBounds,
   WriteSessionInput,
 } from "./lib/types.js";
 
@@ -84,9 +85,12 @@ function pairingForWorkSessionDb(workSessionDbId: string): DbPairing {
 }
 
 function createWindow(): void {
+  const bounds = getRestoredWindowBounds(configStore.get().windowBounds);
   win = new BrowserWindow({
-    width: 980,
-    height: 720,
+    width: bounds?.width ?? 980,
+    height: bounds?.height ?? 720,
+    x: bounds?.x,
+    y: bounds?.y,
     // Keep the minimum small enough that the tracker can tuck into a
     // corner of the screen. Settings headings and task rows both read
     // OK down to about 340 px wide.
@@ -104,6 +108,27 @@ function createWindow(): void {
     },
   });
 
+  let saveBoundsTimer: NodeJS.Timeout | null = null;
+  const scheduleBoundsSave = () => {
+    if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+    saveBoundsTimer = setTimeout(() => {
+      if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+      configStore
+        .update({ windowBounds: win.getBounds() })
+        .catch((err) => console.warn("Could not save window bounds:", err));
+    }, 250);
+  };
+  win.on("resize", scheduleBoundsSave);
+  win.on("move", scheduleBoundsSave);
+  win.on("close", () => {
+    if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+    configStore
+      .update({ windowBounds: win.getBounds() })
+      .catch((err) => console.warn("Could not save window bounds:", err));
+  });
+
   // Open external links in the default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -116,6 +141,34 @@ function createWindow(): void {
   } else {
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
   }
+}
+
+function getRestoredWindowBounds(
+  saved: WindowBounds | null,
+): WindowBounds | null {
+  if (!saved) return null;
+  const width = Math.max(340, Math.round(saved.width));
+  const height = Math.max(360, Math.round(saved.height));
+  const candidate = {
+    x: Math.round(saved.x),
+    y: Math.round(saved.y),
+    width,
+    height,
+  };
+  const displays = screen.getAllDisplays();
+  const center = {
+    x: candidate.x + candidate.width / 2,
+    y: candidate.y + candidate.height / 2,
+  };
+  const visible = displays.some(({ workArea }) => {
+    return (
+      center.x >= workArea.x &&
+      center.x <= workArea.x + workArea.width &&
+      center.y >= workArea.y &&
+      center.y <= workArea.y + workArea.height
+    );
+  });
+  return visible ? candidate : null;
 }
 
 app.whenReady().then(async () => {
@@ -280,6 +333,38 @@ async function tryFlushQueue(): Promise<void> {
   win?.webContents.send("queue:updated", queue.size());
 }
 
+function splitSessionAtLocalMidnights(input: WriteSessionInput): WriteSessionInput[] {
+  const start = Date.parse(input.startIso);
+  const end = Date.parse(input.endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return [input];
+  }
+
+  const segments: WriteSessionInput[] = [];
+  let segmentStart = start;
+  while (segmentStart < end) {
+    const nextMidnight = new Date(segmentStart);
+    nextMidnight.setHours(24, 0, 0, 0);
+    const segmentEnd = Math.min(end, nextMidnight.getTime());
+    segments.push({
+      ...input,
+      startIso: new Date(segmentStart).toISOString(),
+      endIso: new Date(segmentEnd).toISOString(),
+    });
+    segmentStart = segmentEnd;
+  }
+  return segments.length > 0 ? segments : [input];
+}
+
+function durationSeconds(input: WriteSessionInput): number {
+  const start = Date.parse(input.startIso);
+  const end = Date.parse(input.endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return 0;
+  }
+  return Math.floor((end - start) / 1000);
+}
+
 function registerIpc(): void {
   ipcMain.handle("config:get", () => configStore.get());
 
@@ -319,7 +404,8 @@ function registerIpc(): void {
         !statusOk ||
         p.assigneePropertyName === undefined ||
         p.statusPropertyName === undefined ||
-        !Array.isArray(p.completedStatusNames)
+        !Array.isArray(p.completedStatusNames) ||
+        p.titlePropertyName === undefined
       );
     });
     if (needsMigration) {
@@ -334,7 +420,8 @@ function registerIpc(): void {
             statusOk &&
             p.assigneePropertyName !== undefined &&
             p.statusPropertyName !== undefined &&
-            Array.isArray(p.completedStatusNames);
+            Array.isArray(p.completedStatusNames) &&
+            p.titlePropertyName !== undefined;
           if (hasAll) return p;
           try {
             const meta = await client.fetchTasksDbMeta(p.tasksDbId, warnings);
@@ -350,6 +437,7 @@ function registerIpc(): void {
               completedStatusNames: Array.isArray(p.completedStatusNames)
                 ? p.completedStatusNames
                 : meta.completedStatusNames,
+              titlePropertyName: p.titlePropertyName ?? meta.titlePropertyName,
             };
           } catch {
             return p;
@@ -375,12 +463,26 @@ function registerIpc(): void {
 
   ipcMain.handle(
     "notion:searchTasks",
-    async (_evt, query: unknown): Promise<TaskItem[]> => {
+    async (
+      _evt,
+      query: unknown,
+      opts: unknown,
+    ): Promise<TaskItem[]> => {
       const q = typeof query === "string" ? query : "";
       if (q.trim().length === 0) return [];
       const cfg = configStore.get();
       const client = ensureNotion();
-      const results = await client.searchTasks(q, cfg.pairings);
+      const includeRecentCompleted =
+        typeof opts === "object" &&
+        opts !== null &&
+        "includeRecentCompleted" in opts &&
+        Boolean(
+          (opts as { includeRecentCompleted?: boolean })
+            .includeRecentCompleted,
+        );
+      const results = await client.searchTasks(q, cfg.pairings, {
+        includeRecentCompleted,
+      });
       // Merge search hits into lastTasks so a later writeSession can
       // recover the trusted title from our own cache instead of
       // trusting whatever the renderer echoes back.
@@ -421,19 +523,19 @@ function registerIpc(): void {
         taskRelationName: pairing.taskRelationName,
       };
 
-      const durationSec = Math.max(
+      const segments = splitSessionAtLocalMidnights(trustedInput);
+      const durationSec = segments.reduce(
+        (sum, segment) => sum + durationSeconds(segment),
         0,
-        Math.floor(
-          (new Date(trustedInput.endIso).getTime() -
-            new Date(trustedInput.startIso).getTime()) /
-            1000,
-        ),
       );
 
       // Regardless of whether the Notion write ends up queued, from the
       // user's perspective they just tracked time, so reflect it in
       // today's total and bump the recent-tasks LRU.
-      const newToday = await stats.addSessionSeconds(durationSec);
+      const newToday = await stats.addSessionWindow(
+        trustedInput.startIso,
+        trustedInput.endIso,
+      );
       win?.webContents.send("stats:today", newToday);
 
       const knownTask = lastTasks.get(trustedInput.taskId);
@@ -461,12 +563,23 @@ function registerIpc(): void {
 
       try {
         const client = ensureNotion();
-        await client.createWorkSession(trustedInput);
+        let queued = false;
+        for (const segment of segments) {
+          try {
+            await client.createWorkSession(segment);
+          } catch (err) {
+            console.warn("Notion write failed, queuing segment:", err);
+            await queue.enqueue(segment);
+            queued = true;
+          }
+        }
         win?.webContents.send("queue:updated", queue.size());
-        return { ok: true };
+        return queued ? { ok: false, queued: true } : { ok: true };
       } catch (err) {
         console.warn("Notion write failed, queuing:", err);
-        await queue.enqueue(trustedInput);
+        for (const segment of segments) {
+          await queue.enqueue(segment);
+        }
         win?.webContents.send("queue:updated", queue.size());
         return { ok: false, queued: true };
       }

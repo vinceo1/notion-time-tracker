@@ -27,11 +27,13 @@ interface Props {
   refreshKey: number;
   /** Error surfaced by the most-recent Stop (owned by App). */
   topError: string | null;
+  topNotice: string | null;
   onStart: (task: TaskItem) => void;
   onStop: () => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
   onClearTopError: () => void;
+  onClearTopNotice: () => void;
 }
 
 export function TasksView({
@@ -41,11 +43,13 @@ export function TasksView({
   recents,
   refreshKey,
   topError,
+  topNotice,
   onStart,
   onStop,
   onRefresh,
   onOpenSettings,
   onClearTopError,
+  onClearTopNotice,
 }: Props): JSX.Element {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [taskErrors, setTaskErrors] = useState<TaskQueryError[]>([]);
@@ -148,6 +152,8 @@ export function TasksView({
         timeTrackedMin: null,
         clientName: r.clientName,
         statusOptions: pairing?.statusOptions ?? [],
+        isCompleted: false,
+        completedAt: null,
       };
       onStart(synthetic);
     },
@@ -200,6 +206,22 @@ export function TasksView({
               type="button"
               className="shrink-0 text-xs text-red-200/60 hover:text-red-200"
               onClick={onClearTopError}
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
+
+        {topNotice ? (
+          <div
+            className="mb-4 flex items-start justify-between gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"
+            role="status"
+          >
+            <span className="min-w-0 flex-1">{topNotice}</span>
+            <button
+              type="button"
+              className="shrink-0 text-xs text-emerald-200/60 hover:text-emerald-200"
+              onClick={onClearTopNotice}
             >
               ✕
             </button>

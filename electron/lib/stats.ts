@@ -83,6 +83,13 @@ export class StatsStore {
     return { ...this.data.today };
   }
 
+  async addSessionWindow(startIso: string, endIso: string): Promise<TodayStats> {
+    this.rolloverIfNeeded();
+    this.data.today.totalSeconds += secondsWithinToday(startIso, endIso);
+    await this.persist();
+    return { ...this.data.today };
+  }
+
   /**
    * Replace today's total with an authoritative value (e.g. a sum
    * just computed from Notion). Only moves forward — a smaller remote
@@ -170,4 +177,19 @@ export class StatsStore {
     await fs.mkdir(path.dirname(this.filepath), { recursive: true });
     await fs.writeFile(this.filepath, JSON.stringify(this.data, null, 2), "utf8");
   }
+}
+
+function secondsWithinToday(startIso: string, endIso: string): number {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return 0;
+  }
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  const overlapStart = Math.max(start, dayStart.getTime());
+  const overlapEnd = Math.min(end, dayEnd.getTime());
+  return Math.max(0, Math.floor((overlapEnd - overlapStart) / 1000));
 }

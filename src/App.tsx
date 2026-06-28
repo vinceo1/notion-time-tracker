@@ -19,6 +19,10 @@ interface TimerState {
   startedAt: number;
 }
 
+interface PomodoroTimerState {
+  startedAt: number;
+}
+
 export default function App(): JSX.Element {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [view, setView] = useState<View>("loading");
@@ -26,17 +30,27 @@ export default function App(): JSX.Element {
   // Timer + surrounding state is owned here (not inside TasksView) so
   // opening Settings doesn't unmount the timer and lose the session.
   const [timer, setTimer] = useState<TimerState | null>(null);
+  const [pomodoroTimer, setPomodoroTimer] =
+    useState<PomodoroTimerState | null>(null);
   const [isWriting, setIsWriting] = useState<boolean>(false);
   const [queuedCount, setQueuedCount] = useState<number>(0);
   const [todayBaseline, setTodayBaseline] = useState<number>(0);
   const [recents, setRecents] = useState<RecentTask[]>([]);
   const [tasksRefreshKey, setTasksRefreshKey] = useState<number>(0);
   const [topError, setTopError] = useState<string | null>(null);
+  const [topNotice, setTopNotice] = useState<string | null>(null);
   const [updateBanner, setUpdateBanner] = useState<UpdateCheckResult | null>(
     null,
   );
 
   const elapsed = useTimer(timer?.startedAt ?? null, timer !== null);
+  const pomodoroElapsed = useTimer(
+    pomodoroTimer?.startedAt ?? null,
+    pomodoroTimer !== null,
+  );
+  const currentSessionTodaySeconds = timer
+    ? secondsFromSessionInToday(timer.startedAt, Date.now())
+    : 0;
 
   // Initial config load.
   useEffect(() => {
@@ -99,15 +113,16 @@ export default function App(): JSX.Element {
     setTimer({ task, startedAt: Date.now() });
   }, []);
 
-  const handleStop = useCallback(async () => {
+  const handleStop = useCallback(async (opts?: { endedAt?: number; autoStopped?: boolean }) => {
     if (!timer || !config) return;
     // Optimistic clear so the UI feels instant — failed Notion writes
     // fall into the offline queue and retry silently.
     const stopped = timer;
-    const endedAt = Date.now();
+    const endedAt = opts?.endedAt ?? Date.now();
     setTimer(null);
     setIsWriting(true);
     setTopError(null);
+    setTopNotice(null);
     try {
       const result = await api.notion.writeSession({
         taskId: stopped.task.id,
@@ -123,6 +138,8 @@ export default function App(): JSX.Element {
         setTopError(
           "Couldn't reach Notion — your session was saved locally and will be sent automatically when the connection comes back.",
         );
+      } else if (opts?.autoStopped) {
+        setTopNotice("Timer stopped automatically after 3 hours and saved.");
       }
     } catch (err) {
       setTopError((err as Error).message ?? "Failed to save session");
@@ -133,6 +150,16 @@ export default function App(): JSX.Element {
       window.setTimeout(() => setTasksRefreshKey((k) => k + 1), 600);
     }
   }, [timer, config]);
+
+  useEffect(() => {
+    if (!timer || !config) return;
+    const maxSeconds = Math.max(1, config.maxSessionMinutes) * 60;
+    if (elapsed < maxSeconds) return;
+    void handleStop({
+      endedAt: timer.startedAt + maxSeconds * 1000,
+      autoStopped: true,
+    });
+  }, [timer, config, elapsed, handleStop]);
 
   const triggerTasksRefresh = useCallback(() => {
     setTasksRefreshKey((k) => k + 1);
@@ -162,7 +189,13 @@ export default function App(): JSX.Element {
       <ActiveTimerBar
         activeTask={timer?.task ?? null}
         currentSessionSeconds={elapsed}
+        currentSessionTodaySeconds={currentSessionTodaySeconds}
         todayBaselineSeconds={todayBaseline}
+        pomodoro={config.pomodoro}
+        pomodoroElapsedSeconds={pomodoroElapsed}
+        isPomodoroRunning={pomodoroTimer !== null}
+        onStartPomodoro={() => setPomodoroTimer({ startedAt: Date.now() })}
+        onResetPomodoro={() => setPomodoroTimer(null)}
         queuedCount={queuedCount}
         onStop={handleStop}
         isWriting={isWriting}
@@ -188,13 +221,28 @@ export default function App(): JSX.Element {
           recents={recents}
           refreshKey={tasksRefreshKey}
           topError={topError}
+          topNotice={topNotice}
           onStart={handleStart}
           onStop={handleStop}
           onRefresh={triggerTasksRefresh}
           onOpenSettings={() => setView("settings")}
           onClearTopError={() => setTopError(null)}
+          onClearTopNotice={() => setTopNotice(null)}
         />
       )}
     </div>
   );
+}
+
+function secondsFromSessionInToday(startedAt: number, now: number): number {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(now) || now <= startedAt) {
+    return 0;
+  }
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  const overlapStart = Math.max(startedAt, dayStart.getTime());
+  const overlapEnd = Math.min(now, dayEnd.getTime());
+  return Math.max(0, Math.floor((overlapEnd - overlapStart) / 1000));
 }

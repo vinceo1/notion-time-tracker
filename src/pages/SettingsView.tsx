@@ -4,6 +4,7 @@ import {
   type AppConfig,
   type DbPairing,
   type NotionUser,
+  type PomodoroConfig,
 } from "../api";
 
 // Space reserved on macOS for the hidden-inset traffic-light buttons.
@@ -30,6 +31,7 @@ export function SettingsView({
   const [teamMemberId, setTeamMemberId] = useState(config.teamMemberId ?? "");
   const [parentUrl, setParentUrl] = useState(config.workSessionsParentUrl);
   const [pairings, setPairings] = useState<DbPairing[]>(config.pairings);
+  const [pomodoro, setPomodoro] = useState<PomodoroConfig>(config.pomodoro);
 
   const [users, setUsers] = useState<NotionUser[]>([]);
   const [usersLoading, setUsersLoading] = useState<boolean>(false);
@@ -94,6 +96,7 @@ export function SettingsView({
         teamMemberId: teamMemberId || null,
         workSessionsParentUrl: parentUrl,
         pairings,
+        pomodoro,
       });
       onSaved(next);
     } finally {
@@ -252,6 +255,8 @@ export function SettingsView({
             </div>
           </Section>
 
+          <PomodoroSection value={pomodoro} onChange={setPomodoro} />
+
           <UpdatesSection
             hasActiveTimer={hasActiveTimer}
             onStopTimer={onStopTimer}
@@ -259,6 +264,111 @@ export function SettingsView({
         </div>
       </div>
     </div>
+  );
+}
+
+function PomodoroSection({
+  value,
+  onChange,
+}: {
+  value: PomodoroConfig;
+  onChange: (next: PomodoroConfig) => void;
+}): JSX.Element {
+  const update = (patch: Partial<PomodoroConfig>) =>
+    onChange({ ...value, ...patch });
+
+  return (
+    <Section
+      title="4. Pomodoro timer"
+      description="Show focus and break intervals in the active timer bar. Sessions still save to Notion only when you click Stop."
+    >
+      <div className="flex flex-col gap-4 rounded-md border border-bg-border bg-bg-elev p-3">
+        <label className="flex items-center justify-between gap-4">
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-white/90">
+              Enable Pomodoro mode
+            </span>
+            <span className="block text-xs text-white/45">
+              Adds a live focus/break progress meter while tracking.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="h-4 w-4 shrink-0 accent-white"
+            checked={value.enabled}
+            onChange={(e) => update({ enabled: e.target.checked })}
+          />
+        </label>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <NumberField
+            label="Focus"
+            suffix="min"
+            value={value.focusMinutes}
+            min={1}
+            onChange={(focusMinutes) => update({ focusMinutes })}
+          />
+          <NumberField
+            label="Break"
+            suffix="min"
+            value={value.shortBreakMinutes}
+            min={1}
+            onChange={(shortBreakMinutes) => update({ shortBreakMinutes })}
+          />
+          <NumberField
+            label="Long break"
+            suffix="min"
+            value={value.longBreakMinutes}
+            min={1}
+            onChange={(longBreakMinutes) => update({ longBreakMinutes })}
+          />
+          <NumberField
+            label="Long after"
+            suffix="focuses"
+            value={value.sessionsUntilLongBreak}
+            min={1}
+            onChange={(sessionsUntilLongBreak) =>
+              update({ sessionsUntilLongBreak })
+            }
+          />
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function NumberField({
+  label,
+  suffix,
+  value,
+  min,
+  onChange,
+}: {
+  label: string;
+  suffix: string;
+  value: number;
+  min: number;
+  onChange: (next: number) => void;
+}): JSX.Element {
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="truncate text-[11px] font-medium uppercase tracking-wider text-white/40">
+        {label}
+      </span>
+      <div className="flex items-center gap-2 rounded-md border border-bg-border bg-bg px-2 py-1.5 focus-within:border-white/40">
+        <input
+          type="number"
+          className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
+          min={min}
+          value={value}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) onChange(Math.max(min, next));
+          }}
+        />
+        <span className="shrink-0 text-[11px] text-white/35">{suffix}</span>
+      </div>
+    </label>
   );
 }
 
@@ -343,7 +453,7 @@ function UpdatesSection({
 
   return (
     <Section
-      title="4. Updates"
+      title="5. Updates"
       description="Check GitHub for a newer release. Your Notion token and settings are preserved across installs."
     >
       <div className="flex flex-col gap-2">

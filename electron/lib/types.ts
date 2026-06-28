@@ -34,6 +34,13 @@ export interface StatusOption {
   color: NotionColor;
 }
 
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /**
  * A single Tasks DB ↔ Work Sessions DB pairing (one per teamspace).
  * `workSessionDbId` is the database the app will write `Session: ...` pages to.
@@ -69,6 +76,8 @@ export interface DbPairing {
    * in the tracker.
    */
   completedStatusNames: string[];
+  /** Name of the title property on this Tasks DB. */
+  titlePropertyName: string | null;
 }
 
 export interface DiscoverResult {
@@ -82,6 +91,9 @@ export interface AppConfig {
   pairings: DbPairing[];
   /** Work Sessions parent page URL (contains the per-teamspace session DBs). */
   workSessionsParentUrl: string;
+  pomodoro: PomodoroConfig;
+  windowBounds: WindowBounds | null;
+  maxSessionMinutes: number;
   /**
    * Latest version the user explicitly dismissed via the in-app update
    * banner. Periodic checks suppress the banner while
@@ -92,12 +104,31 @@ export interface AppConfig {
   lastDismissedUpdateVersion: string | null;
 }
 
+export interface PomodoroConfig {
+  enabled: boolean;
+  focusMinutes: number;
+  shortBreakMinutes: number;
+  longBreakMinutes: number;
+  sessionsUntilLongBreak: number;
+}
+
+export const DEFAULT_POMODORO_CONFIG: PomodoroConfig = {
+  enabled: false,
+  focusMinutes: 25,
+  shortBreakMinutes: 5,
+  longBreakMinutes: 15,
+  sessionsUntilLongBreak: 4,
+};
+
 export const DEFAULT_CONFIG: AppConfig = {
   notionToken: "",
   teamMemberId: null,
   pairings: [],
   workSessionsParentUrl:
     "https://www.notion.so/ecom-wizards/Work-Sessions-3410df49a4a8800fb975c7a979386060",
+  pomodoro: DEFAULT_POMODORO_CONFIG,
+  windowBounds: null,
+  maxSessionMinutes: 180,
   lastDismissedUpdateVersion: null,
 };
 
@@ -126,6 +157,10 @@ export interface TaskItem {
   clientName: string | null;
   /** The Status options available in this task's Tasks DB. */
   statusOptions: StatusOption[];
+  /** True when the task's status belongs to the DB's complete status group. */
+  isCompleted: boolean;
+  /** ISO timestamp for completion, when the DB has one; otherwise last edited for completed tasks. */
+  completedAt: string | null;
 }
 
 /**
