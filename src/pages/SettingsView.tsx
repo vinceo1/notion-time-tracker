@@ -5,18 +5,19 @@ import {
   type DbPairing,
   type NotionUser,
   type PomodoroConfig,
+  type RendererConfig,
 } from "../api";
 
 // Space reserved on macOS for the hidden-inset traffic-light buttons.
 const MAC_TRAFFIC_LIGHT_PX = 78;
 
 interface Props {
-  config: AppConfig;
+  config: RendererConfig;
   /** True when a timer is currently running — Settings needs it so an
    * update doesn't quit the app mid-session and drop the in-flight time. */
   hasActiveTimer: boolean;
   onStopTimer: () => Promise<void>;
-  onSaved: (next: AppConfig) => void;
+  onSaved: (next: RendererConfig) => void;
   onClose: () => void;
 }
 
@@ -27,11 +28,17 @@ export function SettingsView({
   onSaved,
   onClose,
 }: Props): JSX.Element {
-  const [tokenInput, setTokenInput] = useState(config.notionToken);
+  // The token is write-only from the renderer's perspective: main never
+  // sends it back, so the field starts empty and a non-empty value means
+  // "replace the stored token".
+  const [tokenInput, setTokenInput] = useState("");
   const [teamMemberId, setTeamMemberId] = useState(config.teamMemberId ?? "");
   const [parentUrl, setParentUrl] = useState(config.workSessionsParentUrl);
   const [pairings, setPairings] = useState<DbPairing[]>(config.pairings);
   const [pomodoro, setPomodoro] = useState<PomodoroConfig>(config.pomodoro);
+  const [maxSessionMinutes, setMaxSessionMinutes] = useState<number>(
+    config.maxSessionMinutes,
+  );
 
   const [users, setUsers] = useState<NotionUser[]>([]);
   const [usersLoading, setUsersLoading] = useState<boolean>(false);
@@ -43,10 +50,11 @@ export function SettingsView({
 
   const [saving, setSaving] = useState<boolean>(false);
 
-  const tokenChanged = tokenInput !== config.notionToken;
+  const tokenEntered = tokenInput.trim().length > 0;
+  const hasUsableToken = tokenEntered || config.hasToken;
 
   async function saveTokenFirst() {
-    if (!tokenChanged) return;
+    if (!tokenEntered) return;
     await api.config.set({ notionToken: tokenInput });
   }
 
@@ -91,13 +99,17 @@ export function SettingsView({
   async function handleSave() {
     setSaving(true);
     try {
-      const next = await api.config.set({
-        notionToken: tokenInput,
+      const patch: Partial<AppConfig> = {
         teamMemberId: teamMemberId || null,
         workSessionsParentUrl: parentUrl,
         pairings,
         pomodoro,
-      });
+        maxSessionMinutes,
+      };
+      // Only touch the stored token when the user actually typed one —
+      // an empty field means "keep what's saved".
+      if (tokenEntered) patch.notionToken = tokenInput;
+      const next = await api.config.set(patch);
       onSaved(next);
     } finally {
       setSaving(false);
@@ -106,14 +118,13 @@ export function SettingsView({
 
   // Preload users if token already set
   useEffect(() => {
-    if (config.notionToken && users.length === 0) {
+    if (config.hasToken && users.length === 0) {
       handleLoadUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canSave =
-    tokenInput.trim().length > 0 && pairings.length > 0;
+  const canSave = hasUsableToken && pairings.length > 0;
 
   const isMac = api.platform === "darwin";
 
@@ -155,7 +166,11 @@ export function SettingsView({
               className="input font-mono"
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
-              placeholder="ntn_..."
+              placeholder={
+                config.hasToken
+                  ? "••• token saved — paste a new one to replace it"
+                  : "ntn_..."
+              }
               spellCheck={false}
             />
           </Section>
@@ -170,7 +185,7 @@ export function SettingsView({
                   type="button"
                   className="btn"
                   onClick={handleLoadUsers}
-                  disabled={usersLoading || tokenInput.trim().length === 0}
+                  disabled={usersLoading || !hasUsableToken}
                 >
                   {usersLoading
                     ? "Loading…"
@@ -217,7 +232,7 @@ export function SettingsView({
                   type="button"
                   className="btn"
                   onClick={handleDiscover}
-                  disabled={discoverLoading || tokenInput.trim().length === 0}
+                  disabled={discoverLoading || !hasUsableToken}
                 >
                   {discoverLoading ? "Discovering…" : "Discover databases"}
                 </button>
@@ -256,6 +271,11 @@ export function SettingsView({
           </Section>
 
           <PomodoroSection value={pomodoro} onChange={setPomodoro} />
+
+          <AutoStopSection
+            value={maxSessionMinutes}
+            onChange={setMaxSessionMinutes}
+          />
 
           <UpdatesSection
             hasActiveTimer={hasActiveTimer}
@@ -372,6 +392,41 @@ function NumberField({
   );
 }
 
+function AutoStopSection({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+}): JSX.Element {
+  const hours = value / 60;
+  const human =
+    value % 60 === 0
+      ? `${hours} hour${hours === 1 ? "" : "s"}`
+      : `${value} minutes`;
+  return (
+    <Section
+      title="5. Auto-stop"
+      description="Safety net for forgotten timers: a running session is stopped and saved automatically once it reaches this length."
+    >
+      <div className="flex flex-col gap-2 rounded-md border border-bg-border bg-bg-elev p-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <NumberField
+            label="Stop after"
+            suffix="min"
+            value={value}
+            min={1}
+            onChange={onChange}
+          />
+        </div>
+        <div className="text-xs text-white/45">
+          Currently: sessions auto-stop and save after {human}.
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function UpdatesSection({
   hasActiveTimer,
   onStopTimer,
@@ -453,7 +508,7 @@ function UpdatesSection({
 
   return (
     <Section
-      title="5. Updates"
+      title="6. Updates"
       description="Check GitHub for a newer release. Your Notion token and settings are preserved across installs."
     >
       <div className="flex flex-col gap-2">

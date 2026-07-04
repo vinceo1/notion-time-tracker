@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
-  type AppConfig,
   type RecentTask,
+  type RendererConfig,
   type TaskItem,
   type UpdateCheckResult,
 } from "./api";
@@ -24,7 +24,7 @@ interface PomodoroTimerState {
 }
 
 export default function App(): JSX.Element {
-  const [config, setConfig] = useState<AppConfig | null>(null);
+  const [config, setConfig] = useState<RendererConfig | null>(null);
   const [view, setView] = useState<View>("loading");
 
   // Timer + surrounding state is owned here (not inside TasksView) so
@@ -56,7 +56,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     api.config.get().then((cfg) => {
       setConfig(cfg);
-      setView(!cfg.notionToken || cfg.pairings.length === 0 ? "settings" : "tasks");
+      setView(!cfg.hasToken || cfg.pairings.length === 0 ? "settings" : "tasks");
     });
   }, []);
 
@@ -139,7 +139,9 @@ export default function App(): JSX.Element {
           "Couldn't reach Notion — your session was saved locally and will be sent automatically when the connection comes back.",
         );
       } else if (opts?.autoStopped) {
-        setTopNotice("Timer stopped automatically after 3 hours and saved.");
+        setTopNotice(
+          `Timer stopped automatically after ${formatMinutes(config.maxSessionMinutes)} and saved.`,
+        );
       }
     } catch (err) {
       setTopError((err as Error).message ?? "Failed to save session");
@@ -210,7 +212,7 @@ export default function App(): JSX.Element {
             setView("tasks");
           }}
           onClose={() =>
-            setView(config.notionToken && config.pairings.length > 0 ? "tasks" : "settings")
+            setView(config.hasToken && config.pairings.length > 0 ? "tasks" : "settings")
           }
         />
       ) : (
@@ -232,6 +234,14 @@ export default function App(): JSX.Element {
       )}
     </div>
   );
+}
+
+function formatMinutes(minutes: number): string {
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${minutes} minutes`;
 }
 
 function secondsFromSessionInToday(startedAt: number, now: number): number {

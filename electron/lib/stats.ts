@@ -91,15 +91,16 @@ export class StatsStore {
   }
 
   /**
-   * Replace today's total with an authoritative value (e.g. a sum
-   * just computed from Notion). Only moves forward — a smaller remote
-   * total won't regress a larger local one, so a queued-but-not-yet-
-   * written session doesn't "disappear" during sync.
+   * Replace today's total with an authoritative value just computed
+   * from Notion (plus any locally-queued sessions Notion hasn't seen
+   * yet — the caller adds those in). Unlike the accumulators above,
+   * this may move the total DOWN: that's the point — deleting or
+   * shortening a session in the Notion UI should be reflected here
+   * on the next reconcile.
    */
-  async setTodayTotal(seconds: number): Promise<TodayStats> {
+  async setTodayTotalAuthoritative(seconds: number): Promise<TodayStats> {
     this.rolloverIfNeeded();
-    const next = Math.max(this.data.today.totalSeconds, Math.floor(seconds));
-    this.data.today.totalSeconds = next;
+    this.data.today.totalSeconds = Math.max(0, Math.floor(seconds));
     await this.persist();
     return { ...this.data.today };
   }
@@ -179,7 +180,7 @@ export class StatsStore {
   }
 }
 
-function secondsWithinToday(startIso: string, endIso: string): number {
+export function secondsWithinToday(startIso: string, endIso: string): number {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {

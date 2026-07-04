@@ -104,6 +104,16 @@ export interface AppConfig {
   lastDismissedUpdateVersion: string | null;
 }
 
+/**
+ * What the renderer receives instead of AppConfig: identical except the
+ * Notion token never crosses the IPC bridge — only whether one is set.
+ * All Notion API calls run in the main process, so the renderer has no
+ * legitimate need for the raw secret.
+ */
+export type RendererConfig = Omit<AppConfig, "notionToken"> & {
+  hasToken: boolean;
+};
+
 export interface PomodoroConfig {
   enabled: boolean;
   focusMinutes: number;

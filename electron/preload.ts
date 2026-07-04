@@ -4,6 +4,7 @@ import type {
   DiscoverResult,
   NotionUser,
   RecentTask,
+  RendererConfig,
   TaskItem,
   TasksResult,
   TodayStats,
@@ -19,8 +20,10 @@ type QueueListener = (size: number) => void;
 
 const api = {
   config: {
-    get: (): Promise<AppConfig> => ipcRenderer.invoke("config:get"),
-    set: (patch: Partial<AppConfig>): Promise<AppConfig> =>
+    // The returned config never contains the Notion token itself, only
+    // a `hasToken` flag — the secret stays in the main process.
+    get: (): Promise<RendererConfig> => ipcRenderer.invoke("config:get"),
+    set: (patch: Partial<AppConfig>): Promise<RendererConfig> =>
       ipcRenderer.invoke("config:set", patch),
   },
   notion: {

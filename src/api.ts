@@ -16,6 +16,7 @@ export type {
   NotionUser,
   PomodoroConfig,
   RecentTask,
+  RendererConfig,
   StatusOption,
   TaskItem,
   TaskQueryError,

@@ -18,6 +18,7 @@ import type {
   DiscoverResult,
   NotionUser,
   RecentTask,
+  RendererConfig,
   StatusOption,
   TaskItem,
   TasksResult,
@@ -131,7 +132,7 @@ function createWindow(): void {
 
   // Open external links in the default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isSafeExternalUrl(url)) shell.openExternal(url);
     return { action: "deny" };
   });
 
@@ -204,12 +205,23 @@ app.whenReady().then(async () => {
 
   // Background update check. First call ~30 s after boot to give the
   // user a moment to start working without us hammering GitHub on
-  // launch, then every 24 h. Failures are swallowed.
+  // launch, then every 4 h. Failures are swallowed.
   setTimeout(() => runBackgroundUpdateCheck().catch(() => {}), 30_000);
   setInterval(
     () => runBackgroundUpdateCheck().catch(() => {}),
-    24 * 60 * 60 * 1000,
+    4 * 60 * 60 * 1000,
   );
+
+  // Also re-check when the user comes back to the app, throttled so
+  // window-switching doesn't burst the unauthenticated GitHub API
+  // (60 req/hr/IP). Seeded with "now" so the focus event that fires on
+  // boot defers to the 30-second check above.
+  let lastFocusUpdateCheck = Date.now();
+  app.on("browser-window-focus", () => {
+    if (Date.now() - lastFocusUpdateCheck < 15 * 60 * 1000) return;
+    lastFocusUpdateCheck = Date.now();
+    runBackgroundUpdateCheck().catch(() => {});
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -261,7 +273,7 @@ async function runBackgroundUpdateCheck(): Promise<void> {
     win?.webContents.send("updater:available", result);
   } catch (err) {
     // Network hiccup, GitHub flake, rate limit — don't surface this to
-    // the user. The next 24-hour tick will retry.
+    // the user. The next periodic tick or window focus will retry.
     console.warn("Background update check failed:", err);
   }
 }
@@ -271,10 +283,12 @@ app.on("window-all-closed", () => {
 });
 
 /**
- * Pull today's session total + recent-task list from Notion and merge
- * with whatever we have cached locally. Local stats win when ahead of
- * Notion (you could be mid-session with a write queued), Notion wins
- * when behind (another device added something).
+ * Pull today's session total + recent-task list from Notion, treating
+ * Notion as the source of truth: the local total is REPLACED by the
+ * Notion sum plus any queued-but-unsynced local sessions, so external
+ * edits (someone shortens or deletes a session in the Notion UI) show
+ * up on the next hydrate — including totals going DOWN. On fetch
+ * failure the local total is left untouched, never zeroed.
  */
 async function hydrateFromNotion(): Promise<void> {
   const cfg = configStore.get();
@@ -286,11 +300,9 @@ async function hydrateFromNotion(): Promise<void> {
       cfg.pairings,
       cfg.teamMemberId,
     );
-    const local = stats.getToday();
-    if (notionSeconds > local.totalSeconds) {
-      const updated = await stats.setTodayTotal(notionSeconds);
-      win?.webContents.send("stats:today", updated);
-    }
+    const authoritative = notionSeconds + queue.pendingTodaySeconds();
+    const updated = await stats.setTodayTotalAuthoritative(authoritative);
+    win?.webContents.send("stats:today", updated);
   } catch (err) {
     console.warn("Could not hydrate today total from Notion:", err);
   }
@@ -306,6 +318,47 @@ async function hydrateFromNotion(): Promise<void> {
   } catch (err) {
     console.warn("Could not hydrate recent tasks from Notion:", err);
   }
+}
+
+let pendingHydrateTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Debounced hydrate ~3 s after a session write settles. The delay
+ * covers Notion's query-index lag right after pages.create; the
+ * debounce keeps rapid consecutive Stops from bursting an API we
+ * don't rate-limit anywhere else.
+ */
+function scheduleHydrateFromNotion(): void {
+  if (pendingHydrateTimer) clearTimeout(pendingHydrateTimer);
+  pendingHydrateTimer = setTimeout(() => {
+    pendingHydrateTimer = null;
+    hydrateFromNotion().catch(() => {});
+  }, 3_000);
+}
+
+/**
+ * Only allow web URLs out to the OS. shell.openExternal on other
+ * schemes (file:, smb:, app-specific handlers) can invoke local
+ * handlers with attacker-chosen input if the renderer is ever
+ * compromised.
+ */
+function isSafeExternalUrl(url: unknown): url is string {
+  if (typeof url !== "string") return false;
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Strip the Notion token before anything crosses the IPC bridge — the
+ * renderer only learns whether a token exists.
+ */
+function toRendererConfig(cfg: AppConfig): RendererConfig {
+  const { notionToken, ...rest } = cfg;
+  return { ...rest, hasToken: notionToken.trim().length > 0 };
 }
 
 async function tryFlushQueue(): Promise<void> {
@@ -366,7 +419,7 @@ function durationSeconds(input: WriteSessionInput): number {
 }
 
 function registerIpc(): void {
-  ipcMain.handle("config:get", () => configStore.get());
+  ipcMain.handle("config:get", () => toRendererConfig(configStore.get()));
 
   ipcMain.handle("config:set", async (_evt, patch: Partial<AppConfig>) => {
     await configStore.update(patch);
@@ -374,7 +427,7 @@ function registerIpc(): void {
     if (patch.notionToken !== undefined) {
       notion = null;
     }
-    return configStore.get();
+    return toRendererConfig(configStore.get());
   });
 
   ipcMain.handle("notion:users", async (): Promise<NotionUser[]> => {
@@ -574,6 +627,9 @@ function registerIpc(): void {
           }
         }
         win?.webContents.send("queue:updated", queue.size());
+        // Reconcile against Notion shortly after the write settles so
+        // the displayed total reflects what the database actually holds.
+        scheduleHydrateFromNotion();
         return queued ? { ok: false, queued: true } : { ok: true };
       } catch (err) {
         console.warn("Notion write failed, queuing:", err);
@@ -581,6 +637,7 @@ function registerIpc(): void {
           await queue.enqueue(segment);
         }
         win?.webContents.send("queue:updated", queue.size());
+        scheduleHydrateFromNotion();
         return { ok: false, queued: true };
       }
     },
@@ -641,7 +698,11 @@ function registerIpc(): void {
     return queue.size();
   });
 
-  ipcMain.handle("app:openExternal", (_evt, url: string) => {
+  ipcMain.handle("app:openExternal", (_evt, url: unknown) => {
+    if (!isSafeExternalUrl(url)) {
+      console.warn("Rejected openExternal for non-web URL:", url);
+      return;
+    }
     shell.openExternal(url);
   });
 

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { secondsWithinToday } from "./stats.js";
 import { WriteSessionInput } from "./types.js";
 
 interface QueueEntry {
@@ -33,6 +34,19 @@ export class OfflineQueue {
 
   size(): number {
     return this.entries.length;
+  }
+
+  /**
+   * Seconds of queued session time (tracked locally, not yet written to
+   * Notion) that fall within today's local calendar day. Reconciling
+   * today's total against Notion adds this on top of the Notion sum so
+   * offline sessions don't vanish from the display until they flush.
+   */
+  pendingTodaySeconds(): number {
+    return this.entries.reduce(
+      (sum, e) => sum + secondsWithinToday(e.input.startIso, e.input.endIso),
+      0,
+    );
   }
 
   async enqueue(input: WriteSessionInput): Promise<void> {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
-  type AppConfig,
   type RecentTask,
+  type RendererConfig,
   type TaskItem,
   type TaskQueryError,
 } from "../api";
@@ -16,7 +16,7 @@ interface TimerState {
 }
 
 interface Props {
-  config: AppConfig;
+  config: RendererConfig;
   /** Active timer (owned by App). null when idle. */
   timer: TimerState | null;
   /** Live elapsed seconds for the active timer. Matches App's useTimer. */
