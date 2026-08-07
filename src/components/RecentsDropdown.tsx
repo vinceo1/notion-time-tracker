@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { api, type RecentTask, type TaskItem } from "../api";
+import { AiBadge } from "./AiBadge";
 
 interface Props {
   recents: RecentTask[];
@@ -224,8 +225,11 @@ function RecentsList({
                     lastSession,
                   })}
                 >
-                  <div className="w-full truncate text-sm text-white/90">
-                    {r.title}
+                  <div className="flex w-full min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm text-white/90">
+                      {r.title}
+                    </span>
+                    <AiBadge aiMode={r.aiMode} />
                   </div>
                   <div className="flex w-full items-center gap-2 text-[11px] text-white/40">
                     {context ? (
@@ -324,8 +328,11 @@ function SearchResults({
                       : `Start timer on ${t.title}`
                   }
                 >
-                  <div className="w-full truncate text-sm text-white/90">
-                    {t.title}
+                  <div className="flex w-full min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm text-white/90">
+                      {t.title}
+                    </span>
+                    <AiBadge aiMode={t.aiMode} />
                   </div>
                   <div className="flex w-full items-center gap-2 text-[11px] text-white/40">
                     {context ? (

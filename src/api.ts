@@ -9,6 +9,7 @@ declare global {
 export const api = window.api;
 
 export type {
+  AiMode,
   AppConfig,
   DbPairing,
   DiscoverResult,

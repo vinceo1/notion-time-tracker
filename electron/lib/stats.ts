@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RecentTask, TodayStats } from "./types.js";
+import { parseAiTaskTitle } from "./aiTaskTitle.js";
 
 interface StatsFile {
   today: TodayStats;
@@ -51,7 +52,14 @@ export class StatsStore {
         };
       }
       if (Array.isArray(parsed.recent)) {
-        this.data.recent = parsed.recent.slice(0, MAX_RECENT);
+        this.data.recent = parsed.recent.slice(0, MAX_RECENT).map((recent) => {
+          const parsedTitle = parseAiTaskTitle(recent.title);
+          return {
+            ...recent,
+            title: parsedTitle.title,
+            aiMode: recent.aiMode ?? parsedTitle.aiMode,
+          };
+        });
       }
       this.rolloverIfNeeded();
     } catch (err: unknown) {
@@ -136,9 +144,11 @@ export class StatsStore {
           r.lastTrackedAt > existing.lastTrackedAt
             ? r.lastTrackedAt
             : existing.lastTrackedAt,
-        // Titles drift (rename in Notion); prefer the remote if newer.
-        title:
-          r.lastTrackedAt > existing.lastTrackedAt ? r.title : existing.title,
+        // Remote hydration reads the current Notion title, so it is the
+        // authority for renames and AI category changes even when the latest
+        // Work Session timestamp did not change.
+        title: r.title,
+        aiMode: r.aiMode ?? null,
         clientName: existing.clientName ?? r.clientName,
         timeTrackedMin: existing.timeTrackedMin ?? r.timeTrackedMin,
         lastSessionMin:
