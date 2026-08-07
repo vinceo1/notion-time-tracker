@@ -602,6 +602,7 @@ function registerIpc(): void {
       const newRecent = await stats.touchRecent({
         taskId: trustedInput.taskId,
         title: trustedInput.taskTitle,
+        aiMode: knownTask?.aiMode ?? existing?.aiMode ?? null,
         teamspace: pairing.label,
         workSessionDbId: pairing.workSessionDbId,
         tasksDbId: pairing.tasksDbId,

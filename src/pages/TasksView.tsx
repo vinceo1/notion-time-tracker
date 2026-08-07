@@ -137,6 +137,7 @@ export function TasksView({
       const synthetic: TaskItem = {
         id: r.taskId,
         title: r.title,
+        aiMode: r.aiMode ?? null,
         url: "",
         dueDate: null,
         dueHasTime: false,

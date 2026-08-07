@@ -9,6 +9,7 @@ time you stop the timer.
 - **Auto-sync to Notion** — creates a `Session: <task>` page with Start Time, End Time, Team Member, and Task relation; Duration is computed by your existing formula
 - **Multi-teamspace aware** — discovers every Work Sessions sub-database inside the parent page and pairs it with its Tasks database automatically
 - **Offline queue** — if Notion is unreachable, sessions are saved locally and retried on next launch
+- **Visible AI markers** — optional `[AI]` and `[AI review]` title prefixes become compact badges while task names stay clean in the tracker
 - **Token stays local** — the Notion integration token is stored in the OS-specific app data folder, never in this repo
 
 ## Stack
@@ -31,6 +32,12 @@ Typecheck only:
 
 ```bash
 npm run lint
+```
+
+Run unit tests:
+
+```bash
+npm test
 ```
 
 ## Build installers
@@ -65,6 +72,16 @@ Unsigned Mac builds: first launch requires right-click → **Open** once to bypa
    - **Save** → you're in the task view
 
 ## Notion schema expected
+
+### Optional AI title convention
+
+No extra Notion property is required. Put one marker at the very start of the existing task title:
+
+- `[AI] Prepare ShinePod + HNT brief pack` — AI produces the primary deliverable.
+- `[AI review] Draft Jorge click-fraud email` — AI produces the work, then a human approves, sends, publishes, or applies it.
+- `Create ShinePod video V1` — no prefix means human-led.
+
+The marker stays in the actual Notion title, so it remains visible in Notion Home's My Tasks view. The tracker removes recognized prefixes from its displayed task name and shows an `AI` violet badge or `AI · Review` teal badge beside it. Normal task lists, global search results, and recent tasks all use the same parser. Malformed or embedded bracket text is left unchanged.
 
 **Tasks database** (one per teamspace):
 

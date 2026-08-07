@@ -13,6 +13,7 @@ import type {
   DiscoverResult,
   NotionColor,
   NotionUser,
+  RecentTask,
   StatusOption,
   TaskItem,
   TaskQueryError,
@@ -20,6 +21,7 @@ import type {
   TasksResult,
   WriteSessionInput,
 } from "./types.js";
+import { parseAiTaskTitle } from "./aiTaskTitle.js";
 
 // `TaskType` is still used below for typing the resolved Type column;
 // the import stays even though typeFilter went away in v0.5.0.
@@ -678,20 +680,7 @@ export class NotionClient {
     pairings: DbPairing[],
     teamMemberId: string | null,
     limit: number,
-  ): Promise<
-    Array<{
-      taskId: string;
-      title: string;
-      teamspace: string;
-      workSessionDbId: string;
-      tasksDbId: string;
-      taskRelationName: string;
-      clientName: string | null;
-      lastTrackedAt: string;
-      timeTrackedMin: number | null;
-      lastSessionMin: number | null;
-    }>
-  > {
+  ): Promise<RecentTask[]> {
     if (pairings.length === 0) return [];
 
     interface RawEntry {
@@ -850,18 +839,24 @@ export class NotionClient {
       }),
     );
 
-    return sorted.map((s) => ({
-      taskId: s.taskId,
-      title: titleById.get(s.taskId) ?? "(untitled)",
-      teamspace: s.pairing.label,
-      workSessionDbId: s.pairing.workSessionDbId,
-      tasksDbId: s.pairing.tasksDbId,
-      taskRelationName: s.pairing.taskRelationName,
-      clientName: clientByTask.get(s.taskId) ?? null,
-      lastTrackedAt: s.lastTrackedAt,
-      timeTrackedMin: timeTrackedByTask.get(s.taskId) ?? null,
-      lastSessionMin: s.lastSessionMin,
-    }));
+    return sorted.map((s) => {
+      const parsedTitle = parseAiTaskTitle(
+        titleById.get(s.taskId) ?? "(untitled)",
+      );
+      return {
+        taskId: s.taskId,
+        title: parsedTitle.title,
+        aiMode: parsedTitle.aiMode,
+        teamspace: s.pairing.label,
+        workSessionDbId: s.pairing.workSessionDbId,
+        tasksDbId: s.pairing.tasksDbId,
+        taskRelationName: s.pairing.taskRelationName,
+        clientName: clientByTask.get(s.taskId) ?? null,
+        lastTrackedAt: s.lastTrackedAt,
+        timeTrackedMin: timeTrackedByTask.get(s.taskId) ?? null,
+        lastSessionMin: s.lastSessionMin,
+      };
+    });
   }
 
   async createWorkSession(input: WriteSessionInput): Promise<void> {
@@ -1032,14 +1027,15 @@ function mapPageToTaskItem(
   const props = page.properties;
 
   // Title — find by TYPE, not by name (the column is renamed in some DBs).
-  let title = "Untitled";
+  let rawTitle = "Untitled";
   for (const prop of Object.values(props)) {
     if (prop.type === "title") {
       const text = prop.title.map((t) => t.plain_text).join("").trim();
-      if (text) title = text;
+      if (text) rawTitle = text;
       break;
     }
   }
+  const { title, aiMode } = parseAiTaskTitle(rawTitle);
 
   // Due
   let dueDate: string | null = null;
@@ -1162,6 +1158,7 @@ function mapPageToTaskItem(
     item: {
       id: page.id,
       title,
+      aiMode,
       url: page.url,
       dueDate,
       dueHasTime,

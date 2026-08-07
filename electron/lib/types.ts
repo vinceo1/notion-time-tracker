@@ -6,6 +6,8 @@ export type TaskType =
   | "Weekly Report"
   | "Time Tracking Tasks";
 
+export type AiMode = "ai" | "review";
+
 export interface NotionUser {
   id: string;
   name: string;
@@ -145,6 +147,8 @@ export const DEFAULT_CONFIG: AppConfig = {
 export interface TaskItem {
   id: string;
   title: string;
+  /** Parsed from a leading [AI] or [AI review] marker in the Notion title. */
+  aiMode: AiMode | null;
   url: string;
   /** ISO date (YYYY-MM-DD) or null */
   dueDate: string | null;
@@ -182,6 +186,8 @@ export interface TaskItem {
 export interface RecentTask {
   taskId: string;
   title: string;
+  /** Parsed execution marker; absent in stats files written before v0.5.1. */
+  aiMode?: AiMode | null;
   teamspace: string;
   workSessionDbId: string;
   tasksDbId: string;

@@ -5,6 +5,7 @@ import type { NotionColor, TaskItem } from "../api";
 import { api } from "../api";
 import { formatHMS } from "../lib/formatDuration";
 import { StatusPopover } from "./StatusPopover";
+import { AiBadge } from "./AiBadge";
 
 const PRIORITY_COLORS: Record<string, string> = {
   Urgent: "text-red-300 bg-red-500/10 border-red-500/30",
@@ -108,6 +109,7 @@ export function TaskCard({
               ● REC
             </span>
           ) : null}
+          <AiBadge aiMode={task.aiMode} />
           {task.priority ? (
             <span
               className={clsx(
@@ -258,4 +260,3 @@ function ClockIcon(): JSX.Element {
     </svg>
   );
 }
-
