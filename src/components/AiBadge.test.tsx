@@ -10,13 +10,6 @@ describe("AiBadge", () => {
     expect(html).toContain("violet");
   });
 
-  it("renders the teal review badge", () => {
-    const html = renderToStaticMarkup(<AiBadge aiMode="review" />);
-
-    expect(html).toContain("AI · Review");
-    expect(html).toContain("teal");
-  });
-
   it("renders nothing for a human-led task", () => {
     expect(renderToStaticMarkup(<AiBadge aiMode={null} />)).toBe("");
   });
