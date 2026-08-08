@@ -4,9 +4,9 @@ import { parseAiTaskTitle } from "./aiTaskTitle.js";
 describe("parseAiTaskTitle", () => {
   it.each([
     ["[AI] Prepare brief", "Prepare brief", "ai"],
-    ["[AI review] Draft client email", "Draft client email", "review"],
+    ["[AI review] Draft client email", "Draft client email", "ai"],
     ["[ai] Check images", "Check images", "ai"],
-    ["[AI REVIEW] Publish copy", "Publish copy", "review"],
+    ["[AI REVIEW] Publish copy", "Publish copy", "ai"],
   ] as const)("parses %s", (raw, title, aiMode) => {
     expect(parseAiTaskTitle(raw)).toEqual({ title, aiMode });
   });
@@ -23,12 +23,12 @@ describe("parseAiTaskTitle", () => {
     expect(parseAiTaskTitle(raw)).toEqual({ title: raw, aiMode: null });
   });
 
-  it("reflects a category change without changing the deliverable title", () => {
-    const before = parseAiTaskTitle("[AI] Draft client email");
-    const after = parseAiTaskTitle("[AI review] Draft client email");
+  it("maps the retired review marker to the single AI category", () => {
+    const current = parseAiTaskTitle("[AI] Draft client email");
+    const legacy = parseAiTaskTitle("[AI review] Draft client email");
 
-    expect(before.title).toBe(after.title);
-    expect(before.aiMode).toBe("ai");
-    expect(after.aiMode).toBe("review");
+    expect(current.title).toBe(legacy.title);
+    expect(current.aiMode).toBe("ai");
+    expect(legacy.aiMode).toBe("ai");
   });
 });

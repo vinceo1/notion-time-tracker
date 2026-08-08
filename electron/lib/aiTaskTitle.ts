@@ -6,11 +6,12 @@ export interface ParsedAiTaskTitle {
 }
 
 /**
- * Parse the two optional AI markers used at the start of Notion task titles.
+ * Parse the optional AI marker used at the start of Notion task titles.
  *
  * The marker remains in Notion; callers use the returned clean title only for
  * display. Requiring whitespace and a non-empty title keeps malformed or
- * incidental bracket text untouched.
+ * incidental bracket text untouched. The retired [AI review] marker is still
+ * accepted as AI so existing tasks render consistently while they are renamed.
  */
 export function parseAiTaskTitle(rawTitle: string): ParsedAiTaskTitle {
   const match = rawTitle.match(/^\[(AI|AI review)\]\s+(.+)$/i);
@@ -21,6 +22,6 @@ export function parseAiTaskTitle(rawTitle: string): ParsedAiTaskTitle {
 
   return {
     title,
-    aiMode: match[1].toLowerCase() === "ai review" ? "review" : "ai",
+    aiMode: "ai",
   };
 }
