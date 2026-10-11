@@ -20,6 +20,8 @@ interface Props {
   disabled: boolean;
   /** Live seconds since the timer started. Null when this task isn't active. */
   elapsedSeconds: number | null;
+  /** Settings toggle; when false the Time Estimate is hidden everywhere on the card. */
+  showTimeEstimate: boolean;
   onStart: (task: TaskItem) => void;
   onStop: () => void;
   onOpenInNotion: (url: string) => void;
@@ -31,12 +33,14 @@ export function TaskCard({
   isActive,
   disabled,
   elapsedSeconds,
+  showTimeEstimate,
   onStart,
   onStop,
   onOpenInNotion,
   onStatusChanged,
 }: Props): JSX.Element {
   const dueLabel = formatDueLabel(task.dueDate, task.dueHasTime);
+  const timeEstimateMin = showTimeEstimate ? task.timeEstimateMin : null;
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [currentStatus, setCurrentStatus] = useState(task.status);
@@ -140,23 +144,23 @@ export function TaskCard({
               <span className="font-semibold">
                 {formatHMS(elapsedSeconds)}
               </span>
-              {task.timeEstimateMin !== null ? (
+              {timeEstimateMin !== null ? (
                 <span className="text-white/30">
                   {" / "}
-                  {formatMinutes(task.timeEstimateMin)}
+                  {formatMinutes(timeEstimateMin)}
                 </span>
               ) : null}
             </span>
-          ) : task.timeEstimateMin !== null || task.timeTrackedMin !== null ? (
+          ) : timeEstimateMin !== null || task.timeTrackedMin !== null ? (
             <span className="flex items-center gap-1 text-white/40">
               ·
               <ClockIcon />
               <span>
                 {formatMinutes(task.timeTrackedMin)}
-                {task.timeEstimateMin !== null ? (
+                {timeEstimateMin !== null ? (
                   <span className="text-white/30">
                     {" / "}
-                    {formatMinutes(task.timeEstimateMin)}
+                    {formatMinutes(timeEstimateMin)}
                   </span>
                 ) : null}
               </span>

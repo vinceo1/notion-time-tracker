@@ -274,6 +274,7 @@ export function TasksView({
               activeTaskId={timer?.task.id ?? null}
               anyTimerActive={timer !== null}
               activeElapsedSeconds={elapsedSeconds}
+              showTimeEstimate={config.showTimeEstimate}
               onStart={onStart}
               onStop={onStop}
               onOpenInNotion={handleOpenInNotion}

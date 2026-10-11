@@ -17,6 +17,7 @@ interface Props {
   activeTaskId: string | null;
   anyTimerActive: boolean;
   activeElapsedSeconds: number;
+  showTimeEstimate: boolean;
   onStart: (task: TaskItem) => void;
   onStop: () => void;
   onOpenInNotion: (url: string) => void;
@@ -28,6 +29,7 @@ export function TaskGroup({
   activeTaskId,
   anyTimerActive,
   activeElapsedSeconds,
+  showTimeEstimate,
   onStart,
   onStop,
   onOpenInNotion,
@@ -57,6 +59,7 @@ export function TaskGroup({
               isActive={isActive}
               disabled={anyTimerActive && !isActive}
               elapsedSeconds={isActive ? activeElapsedSeconds : null}
+              showTimeEstimate={showTimeEstimate}
               onStart={onStart}
               onStop={onStop}
               onOpenInNotion={onOpenInNotion}

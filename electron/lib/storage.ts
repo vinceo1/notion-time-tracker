@@ -59,6 +59,10 @@ export class ConfigStore {
         maxSessionMinutes: normalizeMaxSessionMinutes(
           parsed.maxSessionMinutes,
         ),
+        showTimeEstimate:
+          typeof parsed.showTimeEstimate === "boolean"
+            ? parsed.showTimeEstimate
+            : DEFAULT_CONFIG.showTimeEstimate,
       };
 
       // Migrate a legacy plaintext token to encrypted-at-rest.

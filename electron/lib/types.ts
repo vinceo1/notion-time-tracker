@@ -96,6 +96,8 @@ export interface AppConfig {
   pomodoro: PomodoroConfig;
   windowBounds: WindowBounds | null;
   maxSessionMinutes: number;
+  /** Show each task's Time Estimate (min) next to its tracked time. */
+  showTimeEstimate: boolean;
   /**
    * Latest version the user explicitly dismissed via the in-app update
    * banner. Periodic checks suppress the banner while
@@ -141,6 +143,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   pomodoro: DEFAULT_POMODORO_CONFIG,
   windowBounds: null,
   maxSessionMinutes: 180,
+  showTimeEstimate: true,
   lastDismissedUpdateVersion: null,
 };
 

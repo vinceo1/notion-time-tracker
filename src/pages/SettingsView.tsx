@@ -39,6 +39,9 @@ export function SettingsView({
   const [maxSessionMinutes, setMaxSessionMinutes] = useState<number>(
     config.maxSessionMinutes,
   );
+  const [showTimeEstimate, setShowTimeEstimate] = useState<boolean>(
+    config.showTimeEstimate,
+  );
 
   const [users, setUsers] = useState<NotionUser[]>([]);
   const [usersLoading, setUsersLoading] = useState<boolean>(false);
@@ -105,6 +108,7 @@ export function SettingsView({
         pairings,
         pomodoro,
         maxSessionMinutes,
+        showTimeEstimate,
       };
       // Only touch the stored token when the user actually typed one —
       // an empty field means "keep what's saved".
@@ -277,6 +281,11 @@ export function SettingsView({
             onChange={setMaxSessionMinutes}
           />
 
+          <TaskCardsSection
+            showTimeEstimate={showTimeEstimate}
+            onShowTimeEstimateChange={setShowTimeEstimate}
+          />
+
           <UpdatesSection
             hasActiveTimer={hasActiveTimer}
             onStopTimer={onStopTimer}
@@ -427,6 +436,40 @@ function AutoStopSection({
   );
 }
 
+function TaskCardsSection({
+  showTimeEstimate,
+  onShowTimeEstimateChange,
+}: {
+  showTimeEstimate: boolean;
+  onShowTimeEstimateChange: (next: boolean) => void;
+}): JSX.Element {
+  return (
+    <Section
+      title="6. Task cards"
+      description="Choose what each task card shows in the task list."
+    >
+      <div className="flex flex-col gap-4 rounded-md border border-bg-border bg-bg-elev p-3">
+        <label className="flex items-center justify-between gap-4">
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-white/90">
+              Show time estimates
+            </span>
+            <span className="block text-xs text-white/45">
+              Show each task's Time Estimate (min) next to its tracked time.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="h-4 w-4 shrink-0 accent-white"
+            checked={showTimeEstimate}
+            onChange={(e) => onShowTimeEstimateChange(e.target.checked)}
+          />
+        </label>
+      </div>
+    </Section>
+  );
+}
+
 function UpdatesSection({
   hasActiveTimer,
   onStopTimer,
@@ -508,7 +551,7 @@ function UpdatesSection({
 
   return (
     <Section
-      title="6. Updates"
+      title="7. Updates"
       description="Check GitHub for a newer release. Your Notion token and settings are preserved across installs."
     >
       <div className="flex flex-col gap-2">
