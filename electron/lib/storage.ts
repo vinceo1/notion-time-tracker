@@ -12,9 +12,13 @@ import {
  * via Electron safeStorage (Keychain on macOS, DPAPI on Windows) as
  * `notionTokenEncrypted`; the legacy plaintext `notionToken` field is
  * only read for migration and only written when OS encryption is
- * unavailable.
+ * unavailable. `timeEstimateOptIn` marks a file written by v0.5.6 or
+ * later, where `showTimeEstimate` is the user's own choice.
  */
-type DiskConfig = Partial<AppConfig> & { notionTokenEncrypted?: string };
+type DiskConfig = Partial<AppConfig> & {
+  notionTokenEncrypted?: string;
+  timeEstimateOptIn?: boolean;
+};
 
 export class ConfigStore {
   private filepath: string;
@@ -27,7 +31,9 @@ export class ConfigStore {
   async load(): Promise<void> {
     try {
       const raw = await fs.readFile(this.filepath, "utf8");
-      const { notionTokenEncrypted, ...parsed } = JSON.parse(raw) as DiskConfig;
+      const { notionTokenEncrypted, timeEstimateOptIn, ...parsed } = JSON.parse(
+        raw,
+      ) as DiskConfig;
 
       let notionToken =
         typeof parsed.notionToken === "string" ? parsed.notionToken : "";
@@ -59,10 +65,11 @@ export class ConfigStore {
         maxSessionMinutes: normalizeMaxSessionMinutes(
           parsed.maxSessionMinutes,
         ),
+        // v0.5.6 made estimates opt-in. Before then the default (on) was saved
+        // on every window close, so a stored value only counts once the marker
+        // shows it was written under the opt-in default.
         showTimeEstimate:
-          typeof parsed.showTimeEstimate === "boolean"
-            ? parsed.showTimeEstimate
-            : DEFAULT_CONFIG.showTimeEstimate,
+          timeEstimateOptIn === true && parsed.showTimeEstimate === true,
       };
 
       // Migrate a legacy plaintext token to encrypted-at-rest.
@@ -92,7 +99,11 @@ export class ConfigStore {
   private async save(): Promise<void> {
     await fs.mkdir(path.dirname(this.filepath), { recursive: true });
     const { notionToken, ...rest } = this.data;
-    const disk: DiskConfig = { ...rest, notionToken: "" };
+    const disk: DiskConfig = {
+      ...rest,
+      notionToken: "",
+      timeEstimateOptIn: true,
+    };
     if (notionToken && safeStorage.isEncryptionAvailable()) {
       disk.notionTokenEncrypted = safeStorage
         .encryptString(notionToken)
